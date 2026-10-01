@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import EmployeeDialog from '../components/EmployeeDialog.vue'
 import { createMockEmployeeRepository } from '../data/mockEmployeeRepository'
 import {
@@ -7,6 +7,7 @@ import {
   DEFAULT_DATASET_SIZE,
   PAGE_SIZE,
   type EmployeeDraft,
+  type EmployeePage,
   type EmployeeQuery,
   type EmployeeRepository,
   type EmployeeSortField,
@@ -15,9 +16,12 @@ import {
 import type { Employee } from '../types/employee'
 
 const SEARCH_DEBOUNCE_MS = 300
+// 底部 sentinel 進入視窗下方 600px 內就先載入下一批，避免捲到底才看到空白。
+const LOAD_AHEAD_PX = 600
 
 const datasetSize = ref<number>(DEFAULT_DATASET_SIZE)
-const records = ref<Employee[]>([])
+// 列資料只會整批取代或附加，不會就地修改；shallowRef 避免累積上萬筆時為每筆建立深層 proxy。
+const records = shallowRef<Employee[]>([])
 const manualPositions = ref(new Map<string, number>())
 const totalRecords = ref(0)
 const pageTotal = ref(0)
@@ -26,8 +30,11 @@ const searchInput = ref('')
 const activeSearch = ref('')
 const sortBy = ref<EmployeeSortField | null>(null)
 const sortDirection = ref<SortDirection>('asc')
-const currentOffset = ref(0)
-const isLoading = ref(false)
+const isResetting = ref(false)
+const isLoadingMore = ref(false)
+const loadMoreError = ref('')
+const loadMoreSentinel = ref<HTMLElement | null>(null)
+const tableBody = ref<HTMLElement | null>(null)
 const errorMessage = ref('')
 const dialogOpen = ref(false)
 const dialogMode = ref<'create' | 'edit' | 'delete' | 'position'>('create')
@@ -40,6 +47,7 @@ const statusMessage = ref('')
 const repositories = new Map<number, EmployeeRepository>()
 let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined
 let latestPageRequestId = 0
+let loadMoreObserver: IntersectionObserver | undefined
 
 function getRepository(size = datasetSize.value): EmployeeRepository {
   let repository = repositories.get(size)
@@ -50,13 +58,9 @@ function getRepository(size = datasetSize.value): EmployeeRepository {
   return repository
 }
 
-const pageNumber = computed(() => Math.floor(currentOffset.value / PAGE_SIZE) + 1)
-const pageCount = computed(() => Math.ceil(pageTotal.value / PAGE_SIZE))
-const rangeStart = computed(() => (records.value.length > 0 ? currentOffset.value + 1 : 0))
-const rangeEnd = computed(() => currentOffset.value + records.value.length)
-const hasPreviousPage = computed(() => currentOffset.value > 0)
-const hasNextPage = computed(() => rangeEnd.value < pageTotal.value)
 const loadedCount = computed(() => records.value.length)
+const hasMore = computed(() => loadedCount.value < pageTotal.value)
+const nextBatchEnd = computed(() => Math.min(loadedCount.value + PAGE_SIZE, pageTotal.value))
 
 function formatCount(value: number): string {
   return value.toLocaleString('en-US')
@@ -84,21 +88,21 @@ watch(searchInput, (value) => {
   searchDebounceTimer = setTimeout(() => {
     searchDebounceTimer = undefined
     activeSearch.value = normalizedSearch
-    void loadPage(0)
+    void resetList()
   }, SEARCH_DEBOUNCE_MS)
 })
 
 function submitSearch(): void {
   cancelSearchDebounce()
   activeSearch.value = searchInput.value.trim()
-  void loadPage(0)
+  void resetList()
 }
 
 function clearSearch(): void {
   cancelSearchDebounce()
   searchInput.value = ''
   activeSearch.value = ''
-  void loadPage(0)
+  void resetList()
 }
 
 function sortRecords(field: EmployeeSortField): void {
@@ -108,7 +112,7 @@ function sortRecords(field: EmployeeSortField): void {
     sortBy.value = field
     sortDirection.value = 'asc'
   }
-  void loadPage(0)
+  void resetList()
 }
 
 function sortIndicator(field: EmployeeSortField): string {
@@ -121,29 +125,130 @@ function getPinnedPosition(employee: Employee): number | undefined {
   return position === undefined ? undefined : position + 1
 }
 
-async function loadPage(offset = currentOffset.value, query = getCurrentQuery()): Promise<void> {
-  const requestId = latestPageRequestId + 1
-  latestPageRequestId = requestId
-
-  isLoading.value = true
+function startListRequest(): number {
+  latestPageRequestId += 1
+  isLoadingMore.value = false
+  loadMoreError.value = ''
   errorMessage.value = ''
+  return latestPageRequestId
+}
+
+function isStaleRequest(requestId: number): boolean {
+  return requestId !== latestPageRequestId
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
+}
+
+function applyPageSummary(page: EmployeePage): void {
+  manualPositions.value = new Map(page.manualPositions.map(({ id, position }) => [id, position]))
+  totalRecords.value = page.total
+  pageTotal.value = page.pageTotal
+  matchingRecords.value = page.pageTotal
+}
+
+function isSentinelNearViewport(): boolean {
+  const sentinel = loadMoreSentinel.value
+  return sentinel !== null && sentinel.getBoundingClientRect().top <= window.innerHeight + LOAD_AHEAD_PX
+}
+
+// IntersectionObserver 只在可見狀態改變時通知；一批載完 sentinel 仍在預載範圍內（大螢幕或資料列被篩少）時要主動接續。
+async function continueLoadingIfNeeded(): Promise<void> {
+  await nextTick()
+  if (isSentinelNearViewport()) void loadMore()
+}
+
+async function resetList(query = getCurrentQuery()): Promise<void> {
+  const requestId = startListRequest()
+  isResetting.value = true
 
   try {
-    const page = await getRepository().getPage({ ...query, offset, limit: PAGE_SIZE })
-    if (requestId !== latestPageRequestId) return
+    const page = await getRepository().getPage({ ...query, offset: 0, limit: PAGE_SIZE })
+    if (isStaleRequest(requestId)) return
 
     records.value = page.records
-    manualPositions.value = new Map(page.manualPositions.map(({ id, position }) => [id, position]))
-    totalRecords.value = page.total
-    pageTotal.value = page.pageTotal
-    matchingRecords.value = page.pageTotal
-    currentOffset.value = page.offset
+    applyPageSummary(page)
+    window.scrollTo({ top: 0 })
+    void continueLoadingIfNeeded()
   } catch (error) {
-    if (requestId !== latestPageRequestId || (error instanceof Error && error.name === 'AbortError')) return
+    if (isStaleRequest(requestId) || isAbortError(error)) return
     errorMessage.value = '資料載入失敗，請重試。'
   } finally {
-    if (requestId === latestPageRequestId) isLoading.value = false
+    if (!isStaleRequest(requestId)) isResetting.value = false
   }
+}
+
+async function loadMore(): Promise<void> {
+  if (isResetting.value || isLoadingMore.value || !hasMore.value || loadMoreError.value || errorMessage.value) return
+
+  // 沿用目前的 request 世代，任何 reset 或重新整理都會讓這批結果失效，不會把舊條件的資料接到新清單後面。
+  const requestId = latestPageRequestId
+  const offset = records.value.length
+  let appended = false
+  isLoadingMore.value = true
+
+  try {
+    const page = await getRepository().getPage({ ...getCurrentQuery(), offset, limit: PAGE_SIZE })
+    if (isStaleRequest(requestId)) return
+
+    records.value = records.value.concat(page.records)
+    applyPageSummary(page)
+    appended = page.records.length > 0
+  } catch (error) {
+    if (isStaleRequest(requestId) || isAbortError(error)) return
+    loadMoreError.value = `第 ${formatCount(offset + 1)} 筆之後的資料載入失敗。`
+  } finally {
+    if (!isStaleRequest(requestId)) isLoadingMore.value = false
+  }
+
+  if (appended) void continueLoadingIfNeeded()
+}
+
+function retryLoadMore(): void {
+  loadMoreError.value = ''
+  void loadMore()
+}
+
+// 異動後只重抓受影響批次到目前已載入的筆數，保留前面的列與捲動位置；全部抓完才一次替換，避免畫面閃動。
+async function reloadLoadedRange(fromPosition = 1): Promise<void> {
+  const requestId = startListRequest()
+  const query = getCurrentQuery()
+  const targetCount = Math.max(records.value.length, PAGE_SIZE)
+  let offset = Math.min(
+    records.value.length,
+    Math.floor((Math.max(1, fromPosition) - 1) / PAGE_SIZE) * PAGE_SIZE,
+  )
+  let nextRecords = records.value.slice(0, offset)
+  let lastPage: EmployeePage | undefined
+  isResetting.value = true
+
+  try {
+    while (offset < targetCount) {
+      const page = await getRepository().getPage({ ...query, offset, limit: PAGE_SIZE })
+      if (isStaleRequest(requestId)) return
+
+      lastPage = page
+      nextRecords = nextRecords.concat(page.records)
+      offset += page.records.length
+      if (page.records.length < PAGE_SIZE) break
+    }
+
+    records.value = nextRecords
+    if (lastPage) applyPageSummary(lastPage)
+    void continueLoadingIfNeeded()
+  } catch (error) {
+    if (isStaleRequest(requestId) || isAbortError(error)) return
+    errorMessage.value = '資料載入失敗，請重試。'
+  } finally {
+    if (!isStaleRequest(requestId)) isResetting.value = false
+  }
+}
+
+function scrollToPosition(position: number): void {
+  tableBody.value
+    ?.querySelector(`[data-row-position="${position}"]`)
+    ?.scrollIntoView({ block: 'center' })
 }
 
 function changeDatasetSize(event: Event): void {
@@ -151,15 +256,7 @@ function changeDatasetSize(event: Event): void {
   if (!DATASET_SIZE_OPTIONS.some((option) => option.value === nextSize)) return
 
   datasetSize.value = nextSize
-  void loadPage(0)
-}
-
-function goToPreviousPage(): void {
-  void loadPage(Math.max(0, currentOffset.value - PAGE_SIZE))
-}
-
-function goToNextPage(): void {
-  if (hasNextPage.value) void loadPage(currentOffset.value + PAGE_SIZE)
+  void resetList()
 }
 
 function openDialog(
@@ -179,13 +276,6 @@ function closeDialog(): void {
   dialogError.value = ''
 }
 
-async function refreshAfterMutation(offset = currentOffset.value): Promise<void> {
-  await loadPage(offset)
-  if (records.value.length === 0 && offset > 0) {
-    await loadPage(Math.max(0, offset - PAGE_SIZE))
-  }
-}
-
 async function createEmployee(employee: EmployeeDraft): Promise<void> {
   isSaving.value = true
   dialogError.value = ''
@@ -193,7 +283,7 @@ async function createEmployee(employee: EmployeeDraft): Promise<void> {
     await getRepository().create(employee)
     closeDialog()
     statusMessage.value = '人員資料已新增。'
-    await loadPage(0)
+    await resetList()
   } catch {
     dialogError.value = '新增失敗，請檢查資料後重試。'
   } finally {
@@ -210,7 +300,8 @@ async function updateEmployee(employee: EmployeeDraft): Promise<void> {
     await getRepository().update(activeEmployee.value.id, employee)
     closeDialog()
     statusMessage.value = '人員資料已更新。'
-    await refreshAfterMutation()
+    // 有排序時，改值可能讓這筆移到更前面，需從第一批重抓；否則只影響這筆所在批次之後。
+    await reloadLoadedRange(sortBy.value ? 1 : activePosition.value)
   } catch {
     dialogError.value = '更新失敗，請重試。'
   } finally {
@@ -225,7 +316,7 @@ async function deleteEmployee(id: string): Promise<void> {
     await getRepository().delete(id, activePosition.value, getCurrentQuery())
     closeDialog()
     statusMessage.value = '人員資料已刪除。'
-    await refreshAfterMutation()
+    await reloadLoadedRange(activePosition.value)
   } catch (error) {
     dialogError.value = error instanceof Error ? error.message : '刪除失敗，請重試。'
   } finally {
@@ -241,8 +332,17 @@ async function moveEmployeeToPosition(targetPosition: number): Promise<void> {
   try {
     await getRepository().moveToPosition(activeEmployee.value.id, activePosition.value, targetPosition, getCurrentQuery())
     closeDialog()
-    statusMessage.value = `${activeEmployee.value.name} 已移至第 ${formatCount(targetPosition)} 筆。`
-    await loadPage(Math.floor((targetPosition - 1) / PAGE_SIZE) * PAGE_SIZE, getCurrentQuery())
+    await reloadLoadedRange(Math.min(activePosition.value, targetPosition))
+
+    const name = activeEmployee.value.name
+    if (targetPosition <= records.value.length) {
+      statusMessage.value = `${name} 已移至第 ${formatCount(targetPosition)} 筆。`
+      await nextTick()
+      scrollToPosition(targetPosition)
+    } else {
+      // 尚無虛擬列表，不為了跳到遠處一次載入大量列；繼續往下捲動即可看到。
+      statusMessage.value = `${name} 已移至第 ${formatCount(targetPosition)} 筆（尚未載入到該位置）。`
+    }
   } catch (error) {
     dialogError.value = error instanceof Error ? error.message : '位置調整失敗，請重新載入資料後再試。'
   } finally {
@@ -251,10 +351,20 @@ async function moveEmployeeToPosition(targetPosition: number): Promise<void> {
 }
 
 onMounted(() => {
-  void loadPage(0)
+  loadMoreObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void loadMore()
+    },
+    { rootMargin: `0px 0px ${LOAD_AHEAD_PX}px 0px` },
+  )
+  if (loadMoreSentinel.value) loadMoreObserver.observe(loadMoreSentinel.value)
+  void resetList()
 })
 
-onBeforeUnmount(cancelSearchDebounce)
+onBeforeUnmount(() => {
+  cancelSearchDebounce()
+  loadMoreObserver?.disconnect()
+})
 </script>
 
 <template>
@@ -302,7 +412,7 @@ onBeforeUnmount(cancelSearchDebounce)
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h2 id="table-title" class="text-base font-semibold">人員目錄</h2>
-            <p v-if="matchingRecords > 0" class="mt-1 text-sm text-muted">目前顯示第 {{ formatCount(rangeStart) }}–{{ formatCount(rangeEnd) }} 筆</p>
+            <p v-if="matchingRecords > 0" class="mt-1 text-sm text-muted">已載入 {{ formatCount(loadedCount) }} / {{ formatCount(matchingRecords) }} 筆</p>
             <p v-else class="mt-1 text-sm text-muted">沒有符合的資料</p>
           </div>
           <span class="text-xs font-medium text-muted">每批 {{ PAGE_SIZE }} 筆</span>
@@ -322,7 +432,7 @@ onBeforeUnmount(cancelSearchDebounce)
             <button type="submit" class="rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#1d6045]">搜尋</button>
             <button v-if="activeSearch" type="button" class="rounded-md border border-line px-4 py-2.5 text-sm font-medium hover:bg-canvas" @click="clearSearch">清除</button>
           </div>
-          <span v-if="isLoading" role="status" aria-live="polite" class="text-xs text-muted">正在搜尋或排序…</span>
+          <span v-if="isResetting" role="status" aria-live="polite" class="text-xs text-muted">正在搜尋或排序…</span>
         </form>
 
         <div class="my-4 flex flex-wrap items-center justify-between gap-3">
@@ -330,7 +440,7 @@ onBeforeUnmount(cancelSearchDebounce)
             資料規模
             <select
               :value="datasetSize"
-              :disabled="isLoading"
+              :disabled="isResetting"
               aria-label="選擇假資料總筆數"
               class="rounded-md border border-line bg-surface px-3 py-2 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
               @change="changeDatasetSize"
@@ -345,7 +455,7 @@ onBeforeUnmount(cancelSearchDebounce)
 
         <p v-if="errorMessage" role="alert" class="mb-3 flex items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {{ errorMessage }}
-          <button class="font-semibold underline underline-offset-2" @click="loadPage()">重新載入</button>
+          <button class="font-semibold underline underline-offset-2" @click="resetList()">重新載入</button>
         </p>
 
         <div class="mt-4 overflow-hidden rounded-md border border-line bg-surface">
@@ -375,10 +485,11 @@ onBeforeUnmount(cancelSearchDebounce)
                   <th scope="col" class="px-5 py-3.5 text-right">操作</th>
                 </tr>
               </thead>
-              <tbody class="divide-y divide-line">
+              <tbody ref="tableBody" class="divide-y divide-line">
                 <tr
                   v-for="(record, index) in records"
                   :key="record.id"
+                  :data-row-position="index + 1"
                   class="transition-colors"
                   :class="getPinnedPosition(record) ? 'bg-accent-soft hover:bg-accent-soft' : 'hover:bg-[#f8fbf9]'"
                 >
@@ -397,20 +508,20 @@ onBeforeUnmount(cancelSearchDebounce)
                   <td data-label="到職日" class="whitespace-nowrap px-5 py-4 font-mono text-xs text-muted">{{ record.dateStart }}</td>
                   <td data-label="操作" class="px-5 py-3 text-right">
                     <div class="flex flex-wrap justify-end gap-x-3 gap-y-2">
-                      <button class="text-xs font-medium text-accent underline-offset-2 hover:underline disabled:opacity-50" :disabled="isLoading" @click="openDialog('edit', record, currentOffset + index + 1)">編輯</button>
+                      <button class="text-xs font-medium text-accent underline-offset-2 hover:underline disabled:opacity-50" :disabled="isResetting" @click="openDialog('edit', record, index + 1)">編輯</button>
                       <button
                         :class="getPinnedPosition(record) ? 'rounded-md bg-accent px-2 py-1 text-[0.7rem] font-semibold uppercase text-white shadow-sm hover:bg-[#1d6045]' : 'text-xs font-semibold uppercase text-accent underline-offset-2 hover:underline'"
                         :aria-label="`PIN TO position for ${record.name}`"
-                        :disabled="isLoading"
-                        @click="openDialog('position', record, currentOffset + index + 1)"
+                        :disabled="isResetting"
+                        @click="openDialog('position', record, index + 1)"
                       >
                         {{ getPinnedPosition(record) ? `PIN TO #${formatCount(getPinnedPosition(record)!)}` : 'PIN TO' }}
                       </button>
-                      <button class="text-xs font-medium text-red-700 underline-offset-2 hover:underline disabled:opacity-50" :disabled="isLoading" @click="openDialog('delete', record, currentOffset + index + 1)">刪除</button>
+                      <button class="text-xs font-medium text-red-700 underline-offset-2 hover:underline disabled:opacity-50" :disabled="isResetting" @click="openDialog('delete', record, index + 1)">刪除</button>
                     </div>
                   </td>
                 </tr>
-                <tr v-if="isLoading && records.length === 0">
+                <tr v-if="isResetting && records.length === 0">
                   <td colspan="7" class="px-5 py-12 text-center text-sm text-muted" role="status">正在載入資料…</td>
                 </tr>
                 <tr v-else-if="records.length === 0 && !errorMessage">
@@ -421,25 +532,25 @@ onBeforeUnmount(cancelSearchDebounce)
           </div>
         </div>
 
+        <!-- 無限載入觸發點：進入視窗下方預載範圍時載入下一批。 -->
+        <div ref="loadMoreSentinel" aria-hidden="true" class="h-px"></div>
+
         <div class="flex flex-col gap-3 px-1 py-3 text-xs text-muted sm:flex-row sm:items-center sm:justify-between">
-          <p v-if="matchingRecords > 0" aria-live="polite">第 {{ formatCount(pageNumber) }} / {{ formatCount(pageCount) }} 頁 · 顯示 {{ formatCount(rangeStart) }}–{{ formatCount(rangeEnd) }} 筆，共 {{ formatCount(matchingRecords) }} 筆符合（總資料 {{ formatCount(totalRecords) }} 筆）</p>
-          <p v-else aria-live="polite">沒有符合的資料 · 總資料 {{ formatCount(totalRecords) }} 筆</p>
-          <div class="flex items-center gap-2 self-end sm:self-auto">
-            <button
-              class="rounded-md border border-line bg-surface px-3 py-2 font-medium text-ink transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-45"
-              :disabled="!hasPreviousPage || isLoading"
-              @click="goToPreviousPage"
-            >
-              ← 上一頁
-            </button>
-            <button
-              class="rounded-md border border-line bg-surface px-3 py-2 font-medium text-ink transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-45"
-              :disabled="!hasNextPage || isLoading"
-              @click="goToNextPage"
-            >
-              下一頁 →
-            </button>
-          </div>
+          <p aria-live="polite" :class="loadMoreError ? 'text-red-800' : ''">
+            <template v-if="matchingRecords === 0">沒有符合的資料 · 總資料 {{ formatCount(totalRecords) }} 筆</template>
+            <template v-else-if="isLoadingMore">正在載入第 {{ formatCount(loadedCount + 1) }}–{{ formatCount(nextBatchEnd) }} 筆…（已載入 {{ formatCount(loadedCount) }} / {{ formatCount(matchingRecords) }} 筆）</template>
+            <template v-else-if="loadMoreError">{{ loadMoreError }}</template>
+            <template v-else-if="hasMore">已載入 {{ formatCount(loadedCount) }} / {{ formatCount(matchingRecords) }} 筆符合（總資料 {{ formatCount(totalRecords) }} 筆）· 向下捲動自動載入</template>
+            <template v-else>已載入全部 {{ formatCount(matchingRecords) }} 筆符合資料（總資料 {{ formatCount(totalRecords) }} 筆）</template>
+          </p>
+          <button
+            v-if="matchingRecords > 0 && hasMore"
+            class="self-end rounded-md border border-line bg-surface px-3 py-2 font-medium text-ink transition-colors hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-45 sm:self-auto"
+            :disabled="isLoadingMore || isResetting"
+            @click="retryLoadMore"
+          >
+            {{ loadMoreError ? '重試' : '載入更多' }}
+          </button>
         </div>
       </section>
     </main>

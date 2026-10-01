@@ -238,6 +238,32 @@ describe('mock employee repository', () => {
     )
   })
 
+  it('appends consecutive batches without gaps or duplicates for infinite loading', async () => {
+    const repository = createMockEmployeeRepository(1_205)
+    await repository.delete('EMP-00000003', 3)
+    await repository.moveToPosition('EMP-00001205', 1_204, 501)
+    await repository.moveToPosition('EMP-00000010', 9, 1_000)
+
+    async function loadAll(batchSize: number): Promise<string[]> {
+      const ids: string[] = []
+      for (;;) {
+        const page = await repository.getPage({ offset: ids.length, limit: batchSize })
+        if (page.records.length === 0) return ids
+        ids.push(...page.records.map(({ id }) => id))
+        if (ids.length >= page.pageTotal) return ids
+      }
+    }
+
+    const ids = await loadAll(PAGE_SIZE)
+
+    expect(ids).toHaveLength(1_204)
+    expect(new Set(ids).size).toBe(1_204)
+    expect(ids[500]).toBe('EMP-00001205')
+    expect(ids[999]).toBe('EMP-00000010')
+    expect(ids).not.toContain('EMP-00000003')
+    expect(await loadAll(7)).toEqual(ids)
+  })
+
   it('keeps deep-page positions correct after a delete and a manual move', async () => {
     const repository = createMockEmployeeRepository(1_205)
     await repository.delete('EMP-00000003', 3)
