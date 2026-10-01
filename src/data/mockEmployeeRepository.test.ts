@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DATASET_SIZE_OPTIONS, DEFAULT_DATASET_SIZE, PAGE_SIZE } from './employeeRepository'
+import { compareEmployees, matchesEmployeeSearch } from './employeeQuery'
 import { createMockEmployeeRepository } from './mockEmployeeRepository'
 
 describe('mock employee repository', () => {
@@ -45,6 +46,45 @@ describe('mock employee repository', () => {
       expect(record.dateStart).toMatch(/^\d{4}-\d{2}-\d{2}$/)
       expect(record.name.length).toBeGreaterThan(0)
     }
+  })
+
+  it('searches every requested column case-insensitively', () => {
+    const employee = {
+      id: 'EMP-00000001',
+      name: 'Alex Morgan',
+      position: 'Product Designer',
+      location: 'Taipei',
+      age: 31,
+      dateStart: '2022-04-18',
+    }
+
+    expect(matchesEmployeeSearch(employee, 'alex')).toBe(true)
+    expect(matchesEmployeeSearch(employee, 'DESIGNER')).toBe(true)
+    expect(matchesEmployeeSearch(employee, 'taipei')).toBe(true)
+    expect(matchesEmployeeSearch(employee, '31')).toBe(true)
+    expect(matchesEmployeeSearch(employee, '2022-04')).toBe(true)
+    expect(matchesEmployeeSearch(employee, 'nairobi')).toBe(false)
+  })
+
+  it('sorts age numerically and uses ID as an ascending stable tie-breaker', () => {
+    const younger = {
+      id: 'EMP-00000002',
+      name: 'Alex Morgan',
+      position: 'Designer',
+      location: 'Taipei',
+      age: 9,
+      dateStart: '2022-04-18',
+    }
+    const older = { ...younger, id: 'EMP-00000003', age: 31 }
+    const sameAgeLowerId = { ...younger, id: 'EMP-00000001' }
+
+    expect([older, younger, sameAgeLowerId].sort((left, right) =>
+      compareEmployees(left, right, 'age', 'asc'),
+    ).map(({ id }) => id)).toEqual([
+      'EMP-00000001',
+      'EMP-00000002',
+      'EMP-00000003',
+    ])
   })
 
   it('keeps create, update, and delete changes in the repository session', async () => {

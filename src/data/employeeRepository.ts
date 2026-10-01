@@ -10,7 +10,16 @@ export const DATASET_SIZE_OPTIONS = [
   { label: '10,000,000', value: 10_000_000 },
 ] as const
 
-export interface EmployeePageRequest {
+export type EmployeeSortField = 'name' | 'position' | 'location' | 'age' | 'dateStart'
+export type SortDirection = 'asc' | 'desc'
+
+export interface EmployeeQuery {
+  search?: string
+  sortBy?: EmployeeSortField | null
+  sortDirection?: SortDirection
+}
+
+export interface EmployeePageRequest extends EmployeeQuery {
   offset: number
   limit: number
 }
@@ -31,6 +40,6 @@ export interface EmployeeRepository {
   create(employee: EmployeeDraft): Promise<Employee>
   update(id: string, employee: EmployeeDraft): Promise<Employee>
   // 手動位置使用 UI 顯示的 1 起始列號。
-  delete(id: string, currentPosition: number): Promise<void>
-  moveToPosition(id: string, currentPosition: number, targetPosition: number): Promise<void>
+  delete(id: string, currentPosition: number, query?: EmployeeQuery): Promise<void>
+  moveToPosition(id: string, currentPosition: number, targetPosition: number, query?: EmployeeQuery): Promise<void>
 }

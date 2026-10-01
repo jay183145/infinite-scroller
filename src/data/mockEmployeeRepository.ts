@@ -1,61 +1,72 @@
 import type { Employee } from '../types/employee'
+import { matchesEmployeeSearch } from './employeeQuery'
+import type {
+  EmployeeQueryWorkerMessage,
+  EmployeeQueryWorkerRequest,
+  EmployeeQueryWorkerResponse,
+} from './employeeQueryProtocol'
+import { createEmployee } from './employeeData'
 import {
   DEFAULT_DATASET_SIZE,
   PAGE_SIZE,
   type EmployeeDraft,
   type EmployeePage,
   type EmployeePageRequest,
+  type EmployeeQuery,
   type EmployeeRepository,
 } from './employeeRepository'
 
-const firstNames = [
-  'Alex', 'Jin', 'Maya', 'Noah', 'Yuki', 'Lucas', 'Amara', 'Theo',
-  'Sofia', 'Ethan', 'Nina', 'Omar', 'Iris', 'Mateo', 'Ava', 'Kai',
-]
+let queryWorker: Worker | undefined
+let nextQueryRequestId = 1
+const pendingQueryRequests = new Map<number, {
+  resolve: (page: EmployeePage) => void
+  reject: (error: Error) => void
+}>()
 
-const lastNames = [
-  'Morgan', 'Park', 'Chen', 'Williams', 'Sato', 'Ferreira', 'Okafor', 'Martin',
-  'Rossi', 'Patel', 'Kim', 'Garcia', 'Liu', 'Singh', 'Brown', 'Tanaka',
-]
+function getQueryWorker(): Worker {
+  if (!queryWorker) {
+    const worker = new Worker(new URL('./employeeQuery.worker.ts', import.meta.url), { type: 'module' })
+    worker.addEventListener('message', (event: MessageEvent<EmployeeQueryWorkerResponse>) => {
+      const pending = pendingQueryRequests.get(event.data.requestId)
+      if (!pending) return
 
-const positions = [
-  'Product Designer', 'Data Analyst', 'Operations Lead', 'People Partner',
-  'UX Researcher', 'Platform Engineer', 'Program Manager', 'Finance Associate',
-  'Software Engineer', 'Customer Success Manager', 'Recruiter', 'Marketing Specialist',
-]
-
-const locations = [
-  'Taipei', 'Seoul', 'Singapore', 'London', 'Tokyo', 'Lisbon',
-  'Nairobi', 'Paris', 'Toronto', 'Sydney', 'Berlin', 'Manila',
-]
-
-function hashIndex(index: number, salt: number): number {
-  let value = Math.imul(index + salt + 1, 0x45d9f3b)
-  value = Math.imul(value ^ (value >>> 16), 0x45d9f3b)
-  return (value ^ (value >>> 16)) >>> 0
-}
-
-function pickValue<T>(values: readonly T[], seed: number): T {
-  const value = values[seed % values.length]
-  if (value === undefined) throw new Error('假資料樣本清單不可為空。')
-  return value
-}
-
-function createEmployee(index: number): Employee {
-  const nameSeed = hashIndex(index, 11)
-  const positionSeed = hashIndex(index, 23)
-  const locationSeed = hashIndex(index, 37)
-  const dateSeed = hashIndex(index, 53)
-  const startDate = new Date(Date.UTC(2015, 0, 1) + (dateSeed % 4_018) * 86_400_000)
-
-  return {
-    id: `EMP-${String(index + 1).padStart(8, '0')}`,
-    name: `${pickValue(firstNames, nameSeed)} ${pickValue(lastNames, nameSeed >>> 8)}`,
-    position: pickValue(positions, positionSeed),
-    location: pickValue(locations, locationSeed),
-    age: 20 + (hashIndex(index, 71) % 46),
-    dateStart: startDate.toISOString().slice(0, 10),
+      pendingQueryRequests.delete(event.data.requestId)
+      if (event.data.error) pending.reject(new Error(event.data.error))
+      else if (event.data.result) pending.resolve(event.data.result)
+      else pending.reject(new Error('查詢 Worker 未回傳結果。'))
+    })
+    worker.addEventListener('error', (event) => {
+      const error = new Error(event.message || '查詢 Worker 發生錯誤。')
+      for (const pending of pendingQueryRequests.values()) pending.reject(error)
+      pendingQueryRequests.clear()
+      worker.terminate()
+      if (queryWorker === worker) queryWorker = undefined
+    })
+    queryWorker = worker
   }
+
+  return queryWorker
+}
+
+function runEmployeeQuery(request: Omit<EmployeeQueryWorkerRequest, 'type' | 'requestId'>): Promise<EmployeePage> {
+  const worker = getQueryWorker()
+  const requestId = nextQueryRequestId
+  nextQueryRequestId += 1
+
+  return new Promise((resolve, reject) => {
+    pendingQueryRequests.set(requestId, { resolve, reject })
+    const message: EmployeeQueryWorkerMessage = { ...request, type: 'query', requestId }
+    try {
+      worker.postMessage(message)
+    } catch (error) {
+      pendingQueryRequests.delete(requestId)
+      reject(error instanceof Error ? error : new Error('無法傳送查詢至 Worker。'))
+    }
+  })
+}
+
+function clearEmployeeQueryCache(): void {
+  queryWorker?.postMessage({ type: 'clear' })
 }
 
 function getBaseIndex(id: string): number | undefined {
@@ -104,6 +115,7 @@ export function createMockEmployeeRepository(
   const deleted = new Set<string>()
   const manualPositions = new Map<string, number>()
   let nextCreatedId = 1
+  let revision = 0
 
   function getEmployee(id: string): Employee | undefined {
     if (deleted.has(id)) return undefined
@@ -124,6 +136,26 @@ export function createMockEmployeeRepository(
   return {
     async getPage(request: EmployeePageRequest): Promise<EmployeePage> {
       const total = recordCount - deleted.size + created.size
+      if (request.search?.trim() || request.sortBy) {
+        return runEmployeeQuery({
+          recordCount,
+          total,
+          offset: request.offset,
+          limit: request.limit,
+          revision,
+          query: {
+            search: request.search,
+            sortBy: request.sortBy,
+            sortDirection: request.sortDirection,
+          },
+          created: [...created.values()],
+          updated: [...updated.values()],
+          deletedIds: [...deleted],
+          manualPositions: [...manualPositions].map(([id, position]) => ({ id, position })),
+        })
+      }
+
+      clearEmployeeQueryCache()
       const manualEntries = [...manualPositions]
         .filter(([id, position]) => getEmployee(id) !== undefined && position < total)
         .map(([id, position]) => ({ id, position }))
@@ -185,6 +217,7 @@ export function createMockEmployeeRepository(
       nextCreatedId += 1
       const record = { ...employee, id }
       created.set(id, record)
+      revision += 1
       return record
     },
 
@@ -194,14 +227,15 @@ export function createMockEmployeeRepository(
       const record = { ...employee, id }
       if (created.has(id)) created.set(id, record)
       else updated.set(id, record)
+      revision += 1
       return record
     },
 
-    async delete(id: string, currentPosition: number): Promise<void> {
+    async delete(id: string, currentPosition: number, query?: EmployeeQuery): Promise<void> {
       if (!getEmployee(id)) throw new Error('找不到要刪除的人員資料。')
 
       const currentIndex = Math.max(0, Math.floor(currentPosition) - 1)
-      const page = await this.getPage({ offset: currentIndex, limit: 1 })
+      const page = await this.getPage({ offset: currentIndex, limit: 1, ...(query ?? {}) })
       if (page.records[0]?.id !== id) throw new Error('資料位置已變更，請重新確認後再刪除。')
 
       const totalAfterDelete = recordCount - deleted.size + created.size - 1
@@ -217,14 +251,20 @@ export function createMockEmployeeRepository(
 
       updated.delete(id)
       manualPositions.delete(id)
+      revision += 1
     },
 
-    async moveToPosition(id: string, currentPosition: number, targetPosition: number): Promise<void> {
+    async moveToPosition(
+      id: string,
+      currentPosition: number,
+      targetPosition: number,
+      query?: EmployeeQuery,
+    ): Promise<void> {
       const currentIndex = Math.max(0, Math.floor(currentPosition) - 1)
-      const page = await this.getPage({ offset: currentIndex, limit: 1 })
+      const page = await this.getPage({ offset: currentIndex, limit: 1, ...(query ?? {}) })
       if (page.records[0]?.id !== id) throw new Error('資料位置已變更，請重新確認後再調整。')
 
-      const boundedTarget = Math.min(page.total - 1, Math.max(0, Math.floor(targetPosition) - 1))
+      const boundedTarget = Math.min(page.pageTotal - 1, Math.max(0, Math.floor(targetPosition) - 1))
 
       const occupiedPosition = [...manualPositions].find(
         ([manualId, position]) => manualId !== id && position === boundedTarget,
@@ -235,6 +275,7 @@ export function createMockEmployeeRepository(
 
       // PIN 列號是固定位置，只更新本筆的 reservation；其他 PIN 位置不隨一般資料搬動或刪除而位移。
       manualPositions.set(id, boundedTarget)
+      revision += 1
     },
   }
 }
