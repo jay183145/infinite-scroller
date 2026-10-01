@@ -39,6 +39,7 @@ const statusMessage = ref('')
 
 const repositories = new Map<number, EmployeeRepository>()
 let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined
+let latestPageRequestId = 0
 
 function getRepository(size = datasetSize.value): EmployeeRepository {
   let repository = repositories.get(size)
@@ -121,13 +122,15 @@ function getPinnedPosition(employee: Employee): number | undefined {
 }
 
 async function loadPage(offset = currentOffset.value, query = getCurrentQuery()): Promise<void> {
-  if (isLoading.value) return
+  const requestId = latestPageRequestId + 1
+  latestPageRequestId = requestId
 
   isLoading.value = true
   errorMessage.value = ''
 
   try {
     const page = await getRepository().getPage({ ...query, offset, limit: PAGE_SIZE })
+    if (requestId !== latestPageRequestId) return
 
     records.value = page.records
     manualPositions.value = new Map(page.manualPositions.map(({ id, position }) => [id, position]))
@@ -135,10 +138,11 @@ async function loadPage(offset = currentOffset.value, query = getCurrentQuery())
     pageTotal.value = page.pageTotal
     matchingRecords.value = page.pageTotal
     currentOffset.value = page.offset
-  } catch {
+  } catch (error) {
+    if (requestId !== latestPageRequestId || (error instanceof Error && error.name === 'AbortError')) return
     errorMessage.value = '資料載入失敗，請重試。'
   } finally {
-    isLoading.value = false
+    if (requestId === latestPageRequestId) isLoading.value = false
   }
 }
 
@@ -312,12 +316,11 @@ onBeforeUnmount(cancelSearchDebounce)
             type="search"
             autocomplete="off"
             placeholder="搜尋資料編號、姓名、職位、地點、年齡或到職日"
-            :disabled="isLoading"
             class="min-w-0 flex-1 rounded-md border border-line bg-surface px-3 py-2.5 text-sm outline-none placeholder:text-muted/75 focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
           >
           <div class="flex gap-2">
-            <button type="submit" class="rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#1d6045] disabled:opacity-50" :disabled="isLoading">搜尋</button>
-            <button v-if="activeSearch" type="button" class="rounded-md border border-line px-4 py-2.5 text-sm font-medium hover:bg-canvas disabled:opacity-50" :disabled="isLoading" @click="clearSearch">清除</button>
+            <button type="submit" class="rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#1d6045]">搜尋</button>
+            <button v-if="activeSearch" type="button" class="rounded-md border border-line px-4 py-2.5 text-sm font-medium hover:bg-canvas" @click="clearSearch">清除</button>
           </div>
           <span v-if="isLoading" role="status" aria-live="polite" class="text-xs text-muted">正在搜尋或排序…</span>
         </form>
@@ -352,22 +355,22 @@ onBeforeUnmount(cancelSearchDebounce)
               <thead class="bg-[#f7f9f7] text-xs font-semibold text-muted">
                 <tr>
                   <th scope="col" class="px-5 py-3.5" :aria-sort="sortBy === 'dataNumber' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
-                    <button class="font-semibold hover:text-ink disabled:opacity-50" :disabled="isLoading" @click="sortRecords('dataNumber')">資料編號 {{ sortIndicator('dataNumber') }}</button>
+                    <button class="font-semibold hover:text-ink" @click="sortRecords('dataNumber')">資料編號 {{ sortIndicator('dataNumber') }}</button>
                   </th>
                   <th scope="col" class="px-5 py-3.5" :aria-sort="sortBy === 'name' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
-                    <button class="font-semibold hover:text-ink disabled:opacity-50" :disabled="isLoading" @click="sortRecords('name')">姓名 {{ sortIndicator('name') }}</button>
+                    <button class="font-semibold hover:text-ink" @click="sortRecords('name')">姓名 {{ sortIndicator('name') }}</button>
                   </th>
                   <th scope="col" class="px-5 py-3.5" :aria-sort="sortBy === 'position' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
-                    <button class="font-semibold hover:text-ink disabled:opacity-50" :disabled="isLoading" @click="sortRecords('position')">職位 {{ sortIndicator('position') }}</button>
+                    <button class="font-semibold hover:text-ink" @click="sortRecords('position')">職位 {{ sortIndicator('position') }}</button>
                   </th>
                   <th scope="col" class="px-5 py-3.5" :aria-sort="sortBy === 'location' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
-                    <button class="font-semibold hover:text-ink disabled:opacity-50" :disabled="isLoading" @click="sortRecords('location')">地點 {{ sortIndicator('location') }}</button>
+                    <button class="font-semibold hover:text-ink" @click="sortRecords('location')">地點 {{ sortIndicator('location') }}</button>
                   </th>
                   <th scope="col" class="px-5 py-3.5" :aria-sort="sortBy === 'age' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
-                    <button class="font-semibold hover:text-ink disabled:opacity-50" :disabled="isLoading" @click="sortRecords('age')">年齡 {{ sortIndicator('age') }}</button>
+                    <button class="font-semibold hover:text-ink" @click="sortRecords('age')">年齡 {{ sortIndicator('age') }}</button>
                   </th>
                   <th scope="col" class="px-5 py-3.5" :aria-sort="sortBy === 'dateStart' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
-                    <button class="font-semibold hover:text-ink disabled:opacity-50" :disabled="isLoading" @click="sortRecords('dateStart')">到職日 {{ sortIndicator('dateStart') }}</button>
+                    <button class="font-semibold hover:text-ink" @click="sortRecords('dateStart')">到職日 {{ sortIndicator('dateStart') }}</button>
                   </th>
                   <th scope="col" class="px-5 py-3.5 text-right">操作</th>
                 </tr>

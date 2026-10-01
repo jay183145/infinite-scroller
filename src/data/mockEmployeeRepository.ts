@@ -48,7 +48,21 @@ function getQueryWorker(): Worker {
   return queryWorker
 }
 
+function cancelPendingEmployeeQueries(): void {
+  if (pendingQueryRequests.size === 0) return
+
+  const workerToStop = queryWorker
+  queryWorker = undefined
+  workerToStop?.terminate()
+
+  const cancellationError = new DOMException('查詢已由新條件取代。', 'AbortError')
+  for (const pending of pendingQueryRequests.values()) pending.reject(cancellationError)
+  pendingQueryRequests.clear()
+}
+
 function runEmployeeQuery(request: Omit<EmployeeQueryWorkerRequest, 'type' | 'requestId'>): Promise<EmployeePage> {
+  // Worker 同步掃描時無法及時處理 cancel message；直接終止舊 Worker，確保過期全量掃描停止耗用 CPU。
+  cancelPendingEmployeeQueries()
   const worker = getQueryWorker()
   const requestId = nextQueryRequestId
   nextQueryRequestId += 1
@@ -65,7 +79,12 @@ function runEmployeeQuery(request: Omit<EmployeeQueryWorkerRequest, 'type' | 're
   })
 }
 
-function clearEmployeeQueryCache(): void {
+function resetEmployeeQueryWorker(): void {
+  if (pendingQueryRequests.size > 0) {
+    cancelPendingEmployeeQueries()
+    return
+  }
+
   queryWorker?.postMessage({ type: 'clear' })
 }
 
@@ -155,7 +174,7 @@ export function createMockEmployeeRepository(
         })
       }
 
-      clearEmployeeQueryCache()
+      resetEmployeeQueryWorker()
       const manualEntries = [...manualPositions]
         .filter(([id, position]) => getEmployee(id) !== undefined && position < total)
         .map(([id, position]) => ({ id, position }))
