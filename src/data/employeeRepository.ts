@@ -10,7 +10,7 @@ export const DATASET_SIZE_OPTIONS = [
   { label: '10,000,000', value: 10_000_000 },
 ] as const
 
-export type EmployeeSortField = 'name' | 'position' | 'location' | 'age' | 'dateStart'
+export type EmployeeSortField = 'dataNumber' | 'name' | 'position' | 'location' | 'age' | 'dateStart'
 export type SortDirection = 'asc' | 'desc'
 
 export interface EmployeeQuery {

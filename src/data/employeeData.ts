@@ -42,6 +42,7 @@ export function createEmployee(index: number): Employee {
 
   return {
     id: `EMP-${String(index + 1).padStart(8, '0')}`,
+    dataNumber: `DATA-${String(index + 1).padStart(8, '0')}`,
     name: `${pickValue(firstNames, nameSeed)} ${pickValue(lastNames, nameSeed >>> 8)}`,
     position: pickValue(positions, positionSeed),
     location: pickValue(locations, locationSeed),

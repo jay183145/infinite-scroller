@@ -30,6 +30,7 @@ const targetPosition = ref(1)
 
 function emptyDraft(): EmployeeDraft {
   return {
+    dataNumber: '',
     name: '',
     position: '',
     location: '',
@@ -41,6 +42,7 @@ function emptyDraft(): EmployeeDraft {
 function resetDraft(): void {
   draft.value = props.employee
     ? {
+        dataNumber: props.employee.dataNumber,
         name: props.employee.name,
         position: props.employee.position,
         location: props.employee.location,
@@ -111,6 +113,10 @@ function submitPosition(): void {
 
     <form v-if="(mode === 'create' || mode === 'edit') && !confirmUpdate" class="grid gap-4 px-5 py-5 sm:px-6" @submit.prevent="submitForm">
       <label class="grid gap-1.5 text-sm font-medium">
+        資料編號
+        <input v-model.trim="draft.dataNumber" required maxlength="32" autocomplete="off" class="rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
+      </label>
+      <label class="grid gap-1.5 text-sm font-medium">
         姓名
         <input v-model.trim="draft.name" required maxlength="120" autocomplete="name" class="rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
       </label>
@@ -157,6 +163,7 @@ function submitPosition(): void {
       <template v-else-if="mode === 'edit'">
         <p class="text-sm leading-6 text-muted">即將更新「<span class="font-semibold text-ink">{{ employee?.name }}</span>」的資料，請確認變更內容後再繼續。</p>
         <dl class="grid grid-cols-2 gap-x-4 gap-y-3 rounded-md bg-canvas p-4 text-sm">
+          <dt class="text-muted">資料編號</dt><dd class="break-words font-medium">{{ draft.dataNumber }}</dd>
           <dt class="text-muted">姓名</dt><dd class="break-words font-medium">{{ draft.name }}</dd>
           <dt class="text-muted">職位</dt><dd class="break-words font-medium">{{ draft.position }}</dd>
           <dt class="text-muted">地點</dt><dd class="break-words font-medium">{{ draft.location }}</dd>

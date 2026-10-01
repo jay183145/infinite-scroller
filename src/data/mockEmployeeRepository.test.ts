@@ -44,13 +44,16 @@ describe('mock employee repository', () => {
     for (const record of records) {
       expect(Number.isInteger(record.age)).toBe(true)
       expect(record.dateStart).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      expect(record.dataNumber).toMatch(/^DATA-\d{8}$/)
       expect(record.name.length).toBeGreaterThan(0)
     }
+    expect(new Set(records.map(({ dataNumber }) => dataNumber)).size).toBe(records.length)
   })
 
   it('searches every requested column case-insensitively', () => {
     const employee = {
       id: 'EMP-00000001',
+      dataNumber: 'DATA-00000001',
       name: 'Alex Morgan',
       position: 'Product Designer',
       location: 'Taipei',
@@ -69,6 +72,7 @@ describe('mock employee repository', () => {
   it('sorts age numerically and uses ID as an ascending stable tie-breaker', () => {
     const younger = {
       id: 'EMP-00000002',
+      dataNumber: 'DATA-00000002',
       name: 'Alex Morgan',
       position: 'Designer',
       location: 'Taipei',
@@ -90,6 +94,7 @@ describe('mock employee repository', () => {
   it('keeps create, update, and delete changes in the repository session', async () => {
     const repository = createMockEmployeeRepository(1_000)
     const created = await repository.create({
+      dataNumber: 'DATA-CUSTOM-001',
       name: 'Rina Ito',
       position: 'Security Engineer',
       location: 'Osaka',
@@ -102,6 +107,7 @@ describe('mock employee repository', () => {
     expect(createdPage.total).toBe(1_001)
 
     await repository.update(created.id, {
+      dataNumber: 'DATA-CUSTOM-001',
       name: 'Rina Ito',
       position: 'Staff Security Engineer',
       location: 'Osaka',

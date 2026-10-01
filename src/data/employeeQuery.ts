@@ -2,6 +2,7 @@ import type { Employee } from '../types/employee'
 import type { EmployeeSortField, SortDirection } from './employeeRepository'
 
 const searchableFields: Array<keyof Omit<Employee, 'id'>> = [
+  'dataNumber',
   'name',
   'position',
   'location',

@@ -280,13 +280,13 @@ onMounted(() => {
         </div>
 
         <form class="my-4 flex flex-col gap-3 sm:flex-row sm:items-center" role="search" @submit.prevent="submitSearch">
-          <label class="sr-only" for="employee-search">搜尋姓名、職位、地點、年齡或到職日</label>
+          <label class="sr-only" for="employee-search">搜尋資料編號、姓名、職位、地點、年齡或到職日</label>
           <input
             id="employee-search"
             v-model="searchInput"
             type="search"
             autocomplete="off"
-            placeholder="搜尋姓名、職位、地點、年齡或到職日"
+            placeholder="搜尋資料編號、姓名、職位、地點、年齡或到職日"
             :disabled="isLoading"
             class="min-w-0 flex-1 rounded-md border border-line bg-surface px-3 py-2.5 text-sm outline-none placeholder:text-muted/75 focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
           >
@@ -323,9 +323,12 @@ onMounted(() => {
         <div class="mt-4 overflow-hidden rounded-md border border-line bg-surface">
           <div class="overflow-x-auto">
             <table class="people-table w-full border-collapse text-left text-sm">
-              <caption class="sr-only">人員資料，包含姓名、職位、地點、年齡與到職日</caption>
+              <caption class="sr-only">人員資料，包含資料編號、姓名、職位、地點、年齡與到職日</caption>
               <thead class="bg-[#f7f9f7] text-xs font-semibold text-muted">
                 <tr>
+                  <th scope="col" class="px-5 py-3.5" :aria-sort="sortBy === 'dataNumber' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
+                    <button class="font-semibold hover:text-ink disabled:opacity-50" :disabled="isLoading" @click="sortRecords('dataNumber')">資料編號 {{ sortIndicator('dataNumber') }}</button>
+                  </th>
                   <th scope="col" class="px-5 py-3.5" :aria-sort="sortBy === 'name' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
                     <button class="font-semibold hover:text-ink disabled:opacity-50" :disabled="isLoading" @click="sortRecords('name')">姓名 {{ sortIndicator('name') }}</button>
                   </th>
@@ -351,6 +354,7 @@ onMounted(() => {
                   class="transition-colors"
                   :class="getPinnedPosition(record) ? 'bg-accent-soft hover:bg-accent-soft' : 'hover:bg-[#f8fbf9]'"
                 >
+                  <td data-label="資料編號" class="whitespace-nowrap px-5 py-4 font-mono text-xs text-muted">{{ record.dataNumber }}</td>
                   <td data-label="姓名" class="whitespace-nowrap px-5 py-4 font-medium">
                     <span class="inline-flex flex-wrap items-center gap-2">
                       {{ record.name }}
@@ -379,10 +383,10 @@ onMounted(() => {
                   </td>
                 </tr>
                 <tr v-if="isLoading && records.length === 0">
-                  <td colspan="6" class="px-5 py-12 text-center text-sm text-muted" role="status">正在載入資料…</td>
+                  <td colspan="7" class="px-5 py-12 text-center text-sm text-muted" role="status">正在載入資料…</td>
                 </tr>
                 <tr v-else-if="records.length === 0 && !errorMessage">
-                  <td colspan="6" class="px-5 py-12 text-center text-sm text-muted">目前沒有資料</td>
+                  <td colspan="7" class="px-5 py-12 text-center text-sm text-muted">目前沒有資料</td>
                 </tr>
               </tbody>
             </table>
