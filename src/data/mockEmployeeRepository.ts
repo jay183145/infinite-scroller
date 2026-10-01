@@ -2,6 +2,7 @@ import type { Employee } from '../types/employee'
 import {
   DEFAULT_DATASET_SIZE,
   PAGE_SIZE,
+  type EmployeeDraft,
   type EmployeePage,
   type EmployeePageRequest,
   type EmployeeRepository,
@@ -57,23 +58,156 @@ function createEmployee(index: number): Employee {
   }
 }
 
+function getBaseIndex(id: string): number | undefined {
+  const match = /^EMP-(\d{8})$/.exec(id)
+  if (!match?.[1]) return undefined
+
+  const index = Number(match[1]) - 1
+  return index >= 0 ? index : undefined
+}
+
+function countBefore(sortedValues: readonly number[], exclusiveEnd: number): number {
+  let start = 0
+  let end = sortedValues.length
+
+  while (start < end) {
+    const middle = Math.floor((start + end) / 2)
+    const value = sortedValues[middle]
+    if (value !== undefined && value < exclusiveEnd) start = middle + 1
+    else end = middle
+  }
+
+  return start
+}
+
+function findBaseIndexByRank(rank: number, excluded: readonly number[], total: number): number {
+  let start = rank
+  let end = Math.min(total - 1, rank + excluded.length)
+
+  while (start < end) {
+    const middle = Math.floor((start + end) / 2)
+    const includedThroughMiddle = middle + 1 - countBefore(excluded, middle + 1)
+
+    if (includedThroughMiddle > rank) end = middle
+    else start = middle + 1
+  }
+
+  return start
+}
+
 export function createMockEmployeeRepository(
   total = DEFAULT_DATASET_SIZE,
 ): EmployeeRepository {
   const recordCount = Math.max(0, Math.floor(total))
+  const created = new Map<string, Employee>()
+  const updated = new Map<string, Employee>()
+  const deleted = new Set<string>()
+  const pinnedIds: string[] = []
+  let nextCreatedId = 1
+
+  function getEmployee(id: string): Employee | undefined {
+    if (deleted.has(id)) return undefined
+    return created.get(id) ?? updated.get(id) ?? (() => {
+      const index = getBaseIndex(id)
+      return index !== undefined && index < recordCount ? createEmployee(index) : undefined
+    })()
+  }
+
+  function getPinnedIds(): string[] {
+    return pinnedIds.filter((id) => getEmployee(id) !== undefined)
+  }
+
+  function getExcludedBaseIndexes(): number[] {
+    return [...new Set([
+      ...[...deleted, ...getPinnedIds()]
+        .map(getBaseIndex)
+        .filter((index): index is number => index !== undefined && index < recordCount),
+    ])].sort((left, right) => left - right)
+  }
 
   return {
     async getPage(request: EmployeePageRequest): Promise<EmployeePage> {
-      const offset = Math.max(0, Math.floor(request.offset))
+      const pinned = getPinnedIds()
+      const pinnedSet = new Set(pinned)
+      const newRecords = [...created.values()].filter((employee) => !pinnedSet.has(employee.id))
+      const excludedBase = getExcludedBaseIndexes()
+      const pageTotal = newRecords.length + recordCount - excludedBase.length
+      const offset = Math.min(pageTotal, Math.max(0, Math.floor(request.offset)))
       const limit = Math.min(PAGE_SIZE, Math.max(0, Math.floor(request.limit)))
-      const pageLength = Math.min(limit, Math.max(0, recordCount - offset))
+      const pageLength = Math.min(limit, Math.max(0, pageTotal - offset))
+      const createdStart = Math.min(offset, newRecords.length)
+      const createdEnd = Math.min(offset + pageLength, newRecords.length)
+      const pageRecords = newRecords.slice(createdStart, createdEnd)
+      const baseOffset = Math.max(0, offset - newRecords.length)
+      const baseLength = pageLength - pageRecords.length
 
-      // 只生成目前要求的 500 筆區段，不建立或保留整份千萬筆陣列。
-      const records = Array.from({ length: pageLength }, (_, pageIndex) =>
-        createEmployee(offset + pageIndex),
-      )
+      // 二分定位指定頁的基礎資料，避免深頁查詢從第一筆逐列掃描；查詢成本仍會隨變更 ID 數增加。
+      for (let pageIndex = 0; pageIndex < baseLength; pageIndex += 1) {
+        const rank = baseOffset + pageIndex
+        const baseIndex = findBaseIndexByRank(rank, excludedBase, recordCount)
+        pageRecords.push(updated.get(`EMP-${String(baseIndex + 1).padStart(8, '0')}`) ?? createEmployee(baseIndex))
+      }
 
-      return { records, total: recordCount, offset, limit }
+      // 每次只生成目前要求的最多 500 筆，不保存千萬筆陣列；全域搜尋/排序仍應交由有索引的正式 API。
+      const pinnedRecords = pinned.flatMap((id) => {
+        const employee = getEmployee(id)
+        return employee ? [employee] : []
+      })
+
+      return {
+        records: pageRecords,
+        pinnedRecords,
+        total: recordCount - deleted.size + created.size,
+        pageTotal,
+        offset,
+        limit,
+      }
+    },
+
+    async create(employee: EmployeeDraft): Promise<Employee> {
+      const id = `NEW-${String(nextCreatedId).padStart(8, '0')}`
+      nextCreatedId += 1
+      const record = { ...employee, id }
+      created.set(id, record)
+      return record
+    },
+
+    async update(id: string, employee: EmployeeDraft): Promise<Employee> {
+      if (!getEmployee(id)) throw new Error('找不到要更新的人員資料。')
+
+      const record = { ...employee, id }
+      if (created.has(id)) created.set(id, record)
+      else updated.set(id, record)
+      return record
+    },
+
+    async delete(id: string): Promise<void> {
+      if (!getEmployee(id)) throw new Error('找不到要刪除的人員資料。')
+
+      if (created.has(id)) created.delete(id)
+      else deleted.add(id)
+
+      const pinnedIndex = pinnedIds.indexOf(id)
+      if (pinnedIndex >= 0) pinnedIds.splice(pinnedIndex, 1)
+    },
+
+    async setPinned(id: string, pinned: boolean): Promise<void> {
+      if (!getEmployee(id)) throw new Error('找不到要置頂的人員資料。')
+
+      const pinnedIndex = pinnedIds.indexOf(id)
+      if (pinned && pinnedIndex < 0) pinnedIds.push(id)
+      else if (!pinned && pinnedIndex >= 0) pinnedIds.splice(pinnedIndex, 1)
+    },
+
+    async movePinned(id: string, direction: 'up' | 'down'): Promise<void> {
+      const currentIndex = pinnedIds.indexOf(id)
+      if (currentIndex < 0) throw new Error('找不到置頂的人員資料。')
+
+      const nextIndex = currentIndex + (direction === 'up' ? -1 : 1)
+      if (nextIndex < 0 || nextIndex >= pinnedIds.length) return
+
+      const [recordId] = pinnedIds.splice(currentIndex, 1)
+      if (recordId) pinnedIds.splice(nextIndex, 0, recordId)
     },
   }
 }

@@ -17,11 +17,20 @@ export interface EmployeePageRequest {
 
 export interface EmployeePage {
   records: Employee[]
+  pinnedRecords: Employee[]
   total: number
+  pageTotal: number
   offset: number
   limit: number
 }
 
+export type EmployeeDraft = Omit<Employee, 'id'>
+
 export interface EmployeeRepository {
   getPage(request: EmployeePageRequest): Promise<EmployeePage>
+  create(employee: EmployeeDraft): Promise<Employee>
+  update(id: string, employee: EmployeeDraft): Promise<Employee>
+  delete(id: string): Promise<void>
+  setPinned(id: string, pinned: boolean): Promise<void>
+  movePinned(id: string, direction: 'up' | 'down'): Promise<void>
 }

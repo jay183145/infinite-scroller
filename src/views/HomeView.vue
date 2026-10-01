@@ -1,26 +1,49 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import EmployeeDialog from '../components/EmployeeDialog.vue'
 import { createMockEmployeeRepository } from '../data/mockEmployeeRepository'
 import {
   DATASET_SIZE_OPTIONS,
   DEFAULT_DATASET_SIZE,
   PAGE_SIZE,
+  type EmployeeDraft,
+  type EmployeeRepository,
 } from '../data/employeeRepository'
 import type { Employee } from '../types/employee'
 
 const datasetSize = ref<number>(DEFAULT_DATASET_SIZE)
 const records = ref<Employee[]>([])
+const pinnedRecords = ref<Employee[]>([])
 const totalRecords = ref(0)
+const pageTotal = ref(0)
 const currentOffset = ref(0)
 const isLoading = ref(false)
 const errorMessage = ref('')
+const dialogOpen = ref(false)
+const dialogMode = ref<'create' | 'edit' | 'delete'>('create')
+const activeEmployee = ref<Employee | null>(null)
+const dialogError = ref('')
+const isSaving = ref(false)
+const statusMessage = ref('')
+
+const repositories = new Map<number, EmployeeRepository>()
+
+function getRepository(size = datasetSize.value): EmployeeRepository {
+  let repository = repositories.get(size)
+  if (!repository) {
+    repository = createMockEmployeeRepository(size)
+    repositories.set(size, repository)
+  }
+  return repository
+}
 
 const pageNumber = computed(() => Math.floor(currentOffset.value / PAGE_SIZE) + 1)
-const pageCount = computed(() => Math.ceil(totalRecords.value / PAGE_SIZE))
+const pageCount = computed(() => Math.ceil(pageTotal.value / PAGE_SIZE))
 const rangeStart = computed(() => (records.value.length > 0 ? currentOffset.value + 1 : 0))
 const rangeEnd = computed(() => currentOffset.value + records.value.length)
 const hasPreviousPage = computed(() => currentOffset.value > 0)
-const hasNextPage = computed(() => rangeEnd.value < totalRecords.value)
+const hasNextPage = computed(() => rangeEnd.value < pageTotal.value)
+const loadedCount = computed(() => records.value.length + pinnedRecords.value.length)
 
 function formatCount(value: number): string {
   return value.toLocaleString('en-US')
@@ -33,11 +56,12 @@ async function loadPage(offset = currentOffset.value): Promise<void> {
   errorMessage.value = ''
 
   try {
-    const repository = createMockEmployeeRepository(datasetSize.value)
-    const page = await repository.getPage({ offset, limit: PAGE_SIZE })
+    const page = await getRepository().getPage({ offset, limit: PAGE_SIZE })
 
     records.value = page.records
+    pinnedRecords.value = page.pinnedRecords
     totalRecords.value = page.total
+    pageTotal.value = page.pageTotal
     currentOffset.value = page.offset
   } catch {
     errorMessage.value = '資料載入失敗，請重試。'
@@ -60,6 +84,85 @@ function goToPreviousPage(): void {
 
 function goToNextPage(): void {
   if (hasNextPage.value) void loadPage(currentOffset.value + PAGE_SIZE)
+}
+
+function openDialog(mode: 'create' | 'edit' | 'delete', employee: Employee | null = null): void {
+  dialogMode.value = mode
+  activeEmployee.value = employee
+  dialogError.value = ''
+  dialogOpen.value = true
+}
+
+function closeDialog(): void {
+  dialogOpen.value = false
+  dialogError.value = ''
+}
+
+async function refreshAfterMutation(offset = currentOffset.value): Promise<void> {
+  await loadPage(offset)
+  if (records.value.length === 0 && offset > 0) {
+    await loadPage(Math.max(0, offset - PAGE_SIZE))
+  }
+}
+
+async function createEmployee(employee: EmployeeDraft): Promise<void> {
+  isSaving.value = true
+  dialogError.value = ''
+  try {
+    await getRepository().create(employee)
+    closeDialog()
+    statusMessage.value = '人員資料已新增。'
+    await loadPage(0)
+  } catch {
+    dialogError.value = '新增失敗，請檢查資料後重試。'
+  } finally {
+    isSaving.value = false
+  }
+}
+
+async function updateEmployee(employee: EmployeeDraft): Promise<void> {
+  if (!activeEmployee.value) return
+
+  isSaving.value = true
+  dialogError.value = ''
+  try {
+    await getRepository().update(activeEmployee.value.id, employee)
+    closeDialog()
+    statusMessage.value = '人員資料已更新。'
+    await refreshAfterMutation()
+  } catch {
+    dialogError.value = '更新失敗，請重試。'
+  } finally {
+    isSaving.value = false
+  }
+}
+
+async function deleteEmployee(id: string): Promise<void> {
+  isSaving.value = true
+  dialogError.value = ''
+  try {
+    await getRepository().delete(id)
+    closeDialog()
+    statusMessage.value = '人員資料已刪除。'
+    await refreshAfterMutation()
+  } catch {
+    dialogError.value = '刪除失敗，請重試。'
+  } finally {
+    isSaving.value = false
+  }
+}
+
+async function togglePinned(employee: Employee): Promise<void> {
+  const shouldPin = !pinnedRecords.value.some((record) => record.id === employee.id)
+  await getRepository().setPinned(employee.id, shouldPin)
+  statusMessage.value = shouldPin ? `${employee.name} 已置頂。` : `${employee.name} 已取消置頂。`
+  await refreshAfterMutation()
+}
+
+async function movePinned(employee: Employee, direction: 'up' | 'down'): Promise<void> {
+  await getRepository().movePinned(employee.id, direction)
+  statusMessage.value = '置頂順序已更新。'
+  await loadPage(currentOffset.value)
 }
 
 onMounted(() => {
@@ -85,21 +188,26 @@ onMounted(() => {
           <p class="text-xs font-semibold uppercase tracking-[0.12em] text-accent">DIRECTORY / PEOPLE</p>
           <h1 id="page-title" class="mt-2 text-[1.75rem] font-semibold leading-tight sm:text-[2rem]">人員資料</h1>
         </div>
-        <p class="pb-1 text-sm text-muted">固定種子 · 可重現資料</p>
+        <div class="flex items-center gap-3">
+          <p class="text-sm text-muted">固定種子 · 可重現資料</p>
+          <button class="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-[#1d6045] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" @click="openDialog('create')">新增人員</button>
+        </div>
       </section>
 
-      <section aria-label="資料摘要" class="mt-7 grid grid-cols-3 border-y border-line">
-        <div class="py-4 pr-3 sm:py-5">
+      <p v-if="statusMessage" role="status" aria-live="polite" class="mt-4 text-sm text-accent">{{ statusMessage }}</p>
+
+      <section aria-label="資料摘要" class="summary-grid mt-7 grid grid-cols-3 border-y border-line">
+        <div class="min-w-0 py-4 pr-3 sm:py-5">
           <p class="text-xs text-muted sm:text-sm">總資料量</p>
-          <p class="mt-2 text-2xl font-semibold tabular-nums sm:text-[1.75rem]">{{ formatCount(totalRecords) }}</p>
+          <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums sm:text-[1.75rem]">{{ formatCount(totalRecords) }}</p>
         </div>
-        <div class="border-l border-line px-3 py-4 sm:px-6 sm:py-5">
+        <div class="min-w-0 border-l border-line px-3 py-4 sm:px-6 sm:py-5">
           <p class="text-xs text-muted sm:text-sm">符合條件</p>
-          <p class="mt-2 text-2xl font-semibold tabular-nums sm:text-[1.75rem]">{{ formatCount(totalRecords) }}</p>
+          <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums sm:text-[1.75rem]">{{ formatCount(totalRecords) }}</p>
         </div>
-        <div class="border-l border-line pl-3 py-4 sm:pl-6 sm:py-5">
+        <div class="min-w-0 border-l border-line py-4 pl-3 sm:py-5 sm:pl-6">
           <p class="text-xs text-muted sm:text-sm">目前載入</p>
-          <p class="mt-2 text-2xl font-semibold tabular-nums sm:text-[1.75rem]">{{ formatCount(records.length) }}</p>
+          <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums sm:text-[1.75rem]">{{ formatCount(loadedCount) }}</p>
         </div>
       </section>
 
@@ -130,6 +238,29 @@ onMounted(() => {
           <span class="text-xs text-muted">Mock repository · {{ formatCount(datasetSize) }} records</span>
         </div>
 
+        <section v-if="pinnedRecords.length > 0" aria-label="已置頂人員" class="mb-5 border-y border-line bg-accent-soft/45">
+          <div class="flex items-baseline justify-between gap-3 px-4 py-3">
+            <h3 class="text-sm font-semibold">置頂順序</h3>
+            <span class="text-xs text-muted">{{ formatCount(pinnedRecords.length) }} 筆 · 固定顯示於一般資料上方</span>
+          </div>
+          <ol class="divide-y divide-line/70">
+            <li v-for="(employee, index) in pinnedRecords" :key="employee.id" class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <div class="flex min-w-0 items-center gap-3">
+                <span class="w-6 shrink-0 text-xs font-semibold tabular-nums text-accent">{{ String(index + 1).padStart(2, '0') }}</span>
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-medium">{{ employee.name }}</p>
+                  <p class="truncate text-xs text-muted">{{ employee.position }} · {{ employee.location }}</p>
+                </div>
+              </div>
+              <div class="flex shrink-0 items-center gap-1">
+                <button class="rounded px-2 py-1 text-xs font-medium text-accent hover:bg-surface disabled:opacity-40" :disabled="index === 0 || isLoading" :aria-label="`將 ${employee.name} 上移`" @click="movePinned(employee, 'up')">上移</button>
+                <button class="rounded px-2 py-1 text-xs font-medium text-accent hover:bg-surface disabled:opacity-40" :disabled="index === pinnedRecords.length - 1 || isLoading" :aria-label="`將 ${employee.name} 下移`" @click="movePinned(employee, 'down')">下移</button>
+                <button class="rounded px-2 py-1 text-xs font-medium text-muted hover:bg-surface" :aria-label="`取消置頂 ${employee.name}`" @click="togglePinned(employee)">取消置頂</button>
+              </div>
+            </li>
+          </ol>
+        </section>
+
         <p v-if="errorMessage" role="alert" class="mb-3 flex items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {{ errorMessage }}
           <button class="font-semibold underline underline-offset-2" @click="loadPage()">重新載入</button>
@@ -146,6 +277,7 @@ onMounted(() => {
                   <th scope="col" class="px-5 py-3.5">地點</th>
                   <th scope="col" class="px-5 py-3.5">年齡</th>
                   <th scope="col" class="px-5 py-3.5">到職日</th>
+                  <th scope="col" class="px-5 py-3.5 text-right">操作</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-line">
@@ -155,12 +287,19 @@ onMounted(() => {
                   <td data-label="地點" class="whitespace-nowrap px-5 py-4 text-muted">{{ record.location }}</td>
                   <td data-label="年齡" class="whitespace-nowrap px-5 py-4 tabular-nums text-muted">{{ record.age }}</td>
                   <td data-label="到職日" class="whitespace-nowrap px-5 py-4 font-mono text-xs text-muted">{{ record.dateStart }}</td>
+                  <td data-label="操作" class="px-5 py-3 text-right">
+                    <div class="flex flex-wrap justify-end gap-x-3 gap-y-2">
+                      <button class="text-xs font-medium text-accent underline-offset-2 hover:underline" @click="openDialog('edit', record)">編輯</button>
+                      <button class="text-xs font-medium text-accent underline-offset-2 hover:underline" @click="togglePinned(record)">{{ pinnedRecords.some((item) => item.id === record.id) ? '取消置頂' : '置頂' }}</button>
+                      <button class="text-xs font-medium text-red-700 underline-offset-2 hover:underline" @click="openDialog('delete', record)">刪除</button>
+                    </div>
+                  </td>
                 </tr>
                 <tr v-if="isLoading && records.length === 0">
-                  <td colspan="5" class="px-5 py-12 text-center text-sm text-muted" role="status">正在載入資料…</td>
+                  <td colspan="6" class="px-5 py-12 text-center text-sm text-muted" role="status">正在載入資料…</td>
                 </tr>
                 <tr v-else-if="records.length === 0 && !errorMessage">
-                  <td colspan="5" class="px-5 py-12 text-center text-sm text-muted">目前沒有資料</td>
+                  <td colspan="6" class="px-5 py-12 text-center text-sm text-muted">目前沒有資料</td>
                 </tr>
               </tbody>
             </table>
@@ -188,5 +327,17 @@ onMounted(() => {
         </div>
       </section>
     </main>
+
+    <EmployeeDialog
+      :open="dialogOpen"
+      :mode="dialogMode"
+      :employee="activeEmployee"
+      :saving="isSaving"
+      :error="dialogError"
+      @close="closeDialog"
+      @create="createEmployee"
+      @update="updateEmployee"
+      @remove="deleteEmployee"
+    />
   </div>
 </template>

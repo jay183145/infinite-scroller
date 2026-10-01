@@ -1,0 +1,166 @@
+<script setup lang="ts">
+import { ref, watch } from 'vue'
+import type { Employee } from '../types/employee'
+import type { EmployeeDraft } from '../data/employeeRepository'
+
+type DialogMode = 'create' | 'edit' | 'delete'
+
+const props = defineProps<{
+  open: boolean
+  mode: DialogMode
+  employee: Employee | null
+  saving: boolean
+  error: string
+}>()
+
+const emit = defineEmits<{
+  close: []
+  create: [employee: EmployeeDraft]
+  update: [employee: EmployeeDraft]
+  remove: [id: string]
+}>()
+
+const dialog = ref<HTMLDialogElement | null>(null)
+const confirmUpdate = ref(false)
+const draft = ref<EmployeeDraft>(emptyDraft())
+
+function emptyDraft(): EmployeeDraft {
+  return {
+    name: '',
+    position: '',
+    location: '',
+    age: 30,
+    dateStart: new Date().toISOString().slice(0, 10),
+  }
+}
+
+function resetDraft(): void {
+  draft.value = props.employee
+    ? {
+        name: props.employee.name,
+        position: props.employee.position,
+        location: props.employee.location,
+        age: props.employee.age,
+        dateStart: props.employee.dateStart,
+      }
+    : emptyDraft()
+}
+
+watch(() => props.open, (isOpen) => {
+  if (isOpen) {
+    resetDraft()
+    confirmUpdate.value = false
+    if (dialog.value && !dialog.value.open) dialog.value.showModal()
+  } else if (dialog.value?.open) {
+    dialog.value.close()
+  }
+})
+
+watch(() => props.employee, () => {
+  if (props.open) resetDraft()
+})
+
+function submitForm(): void {
+  if (props.mode === 'edit') {
+    confirmUpdate.value = true
+    return
+  }
+
+  emit('create', { ...draft.value })
+}
+
+function confirmEdit(): void {
+  emit('update', { ...draft.value })
+}
+</script>
+
+<template>
+  <dialog
+    ref="dialog"
+    aria-labelledby="employee-dialog-title"
+    class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[34rem] overflow-y-auto rounded-md border border-line bg-surface p-0 text-ink shadow-2xl backdrop:bg-ink/35"
+    @cancel.prevent="emit('close')"
+  >
+    <div class="flex items-start justify-between gap-4 border-b border-line px-5 py-4 sm:px-6">
+      <div>
+        <p class="text-xs font-semibold uppercase tracking-[0.1em] text-accent">PEOPLE DIRECTORY</p>
+        <h2 id="employee-dialog-title" class="mt-1 text-lg font-semibold">
+          {{ mode === 'create' ? '新增人員' : mode === 'edit' ? (confirmUpdate ? '確認更新' : '編輯人員') : '確認刪除' }}
+        </h2>
+      </div>
+      <button
+        type="button"
+        class="rounded-md px-2 py-1 text-sm text-muted hover:bg-canvas focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50"
+        aria-label="關閉對話框"
+        :disabled="saving"
+        @click="emit('close')"
+      >
+        關閉
+      </button>
+    </div>
+
+    <form v-if="mode !== 'delete' && !confirmUpdate" class="grid gap-4 px-5 py-5 sm:px-6" @submit.prevent="submitForm">
+      <label class="grid gap-1.5 text-sm font-medium">
+        姓名
+        <input v-model.trim="draft.name" required maxlength="120" autocomplete="name" class="rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
+      </label>
+      <label class="grid gap-1.5 text-sm font-medium">
+        職位
+        <input v-model.trim="draft.position" required maxlength="120" class="rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
+      </label>
+      <label class="grid gap-1.5 text-sm font-medium">
+        地點
+        <input v-model.trim="draft.location" required maxlength="120" class="rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
+      </label>
+      <div class="grid grid-cols-2 gap-4">
+        <label class="grid gap-1.5 text-sm font-medium">
+          年齡
+          <input v-model.number="draft.age" type="number" min="18" max="100" step="1" required class="min-w-0 rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
+        </label>
+        <label class="grid gap-1.5 text-sm font-medium">
+          到職日
+          <input v-model="draft.dateStart" type="date" required class="min-w-0 rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
+        </label>
+      </div>
+
+      <p v-if="error" role="alert" class="text-sm text-red-700">{{ error }}</p>
+      <div class="flex justify-end gap-2 border-t border-line pt-4">
+        <button type="button" class="rounded-md border border-line px-4 py-2 text-sm font-medium hover:bg-canvas disabled:opacity-50" :disabled="saving" @click="emit('close')">取消</button>
+        <button type="submit" class="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-[#1d6045] disabled:opacity-50" :disabled="saving">
+          {{ mode === 'edit' ? '檢視更新' : saving ? '新增中…' : '新增人員' }}
+        </button>
+      </div>
+    </form>
+
+    <div v-else class="grid gap-4 px-5 py-5 sm:px-6">
+      <template v-if="mode === 'delete'">
+        <p class="text-sm leading-6 text-muted">確定刪除「<span class="font-semibold text-ink">{{ employee?.name }}</span>」？此操作無法復原。</p>
+        <p v-if="error" role="alert" class="text-sm text-red-700">{{ error }}</p>
+        <div class="flex justify-end gap-2 border-t border-line pt-4">
+          <button type="button" class="rounded-md border border-line px-4 py-2 text-sm font-medium hover:bg-canvas disabled:opacity-50" :disabled="saving" @click="emit('close')">取消</button>
+          <button type="button" class="rounded-md bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800 disabled:opacity-50" :disabled="saving" @click="employee && emit('remove', employee.id)">
+            {{ saving ? '刪除中…' : '確認刪除' }}
+          </button>
+        </div>
+      </template>
+
+      <template v-else>
+        <p class="text-sm leading-6 text-muted">即將更新「<span class="font-semibold text-ink">{{ employee?.name }}</span>」的資料，請確認變更內容後再繼續。</p>
+        <dl class="grid grid-cols-2 gap-x-4 gap-y-3 rounded-md bg-canvas p-4 text-sm">
+          <dt class="text-muted">姓名</dt><dd class="break-words font-medium">{{ draft.name }}</dd>
+          <dt class="text-muted">職位</dt><dd class="break-words font-medium">{{ draft.position }}</dd>
+          <dt class="text-muted">地點</dt><dd class="break-words font-medium">{{ draft.location }}</dd>
+          <dt class="text-muted">年齡</dt><dd class="font-medium tabular-nums">{{ draft.age }}</dd>
+          <dt class="text-muted">到職日</dt><dd class="font-medium tabular-nums">{{ draft.dateStart }}</dd>
+        </dl>
+        <p v-if="error" role="alert" class="text-sm text-red-700">{{ error }}</p>
+        <div class="flex justify-end gap-2 border-t border-line pt-4">
+          <button type="button" class="rounded-md border border-line px-4 py-2 text-sm font-medium hover:bg-canvas disabled:opacity-50" :disabled="saving" @click="confirmUpdate = false">返回修改</button>
+          <button type="button" class="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-[#1d6045] disabled:opacity-50" :disabled="saving" @click="confirmEdit">
+            {{ saving ? '更新中…' : '確認更新' }}
+          </button>
+        </div>
+      </template>
+    </div>
+  </dialog>
+</template>
