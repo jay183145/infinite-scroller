@@ -102,7 +102,7 @@ export function createMockEmployeeRepository(
   const created = new Map<string, Employee>()
   const updated = new Map<string, Employee>()
   const deleted = new Set<string>()
-  const pinnedIds: string[] = []
+  const manualPositions = new Map<string, number>()
   let nextCreatedId = 1
 
   function getEmployee(id: string): Employee | undefined {
@@ -113,13 +113,9 @@ export function createMockEmployeeRepository(
     })()
   }
 
-  function getPinnedIds(): string[] {
-    return pinnedIds.filter((id) => getEmployee(id) !== undefined)
-  }
-
   function getExcludedBaseIndexes(): number[] {
     return [...new Set([
-      ...[...deleted, ...getPinnedIds()]
+      ...[...deleted, ...manualPositions.keys()]
         .map(getBaseIndex)
         .filter((index): index is number => index !== undefined && index < recordCount),
     ])].sort((left, right) => left - right)
@@ -127,37 +123,57 @@ export function createMockEmployeeRepository(
 
   return {
     async getPage(request: EmployeePageRequest): Promise<EmployeePage> {
-      const pinned = getPinnedIds()
-      const pinnedSet = new Set(pinned)
-      const newRecords = [...created.values()].filter((employee) => !pinnedSet.has(employee.id))
+      const total = recordCount - deleted.size + created.size
+      const manualEntries = [...manualPositions]
+        .filter(([id, position]) => getEmployee(id) !== undefined && position < total)
+        .map(([id, position]) => ({ id, position }))
+        .sort((left, right) => left.position - right.position)
+      const manualIds = new Set(manualEntries.map(({ id }) => id))
+      const manualByPosition = new Map(manualEntries.map(({ position, id }) => [position, id]))
+      const newRecords = [...created.values()].filter((employee) => !manualIds.has(employee.id))
       const excludedBase = getExcludedBaseIndexes()
-      const pageTotal = newRecords.length + recordCount - excludedBase.length
-      const offset = Math.min(pageTotal, Math.max(0, Math.floor(request.offset)))
+      const pageTotal = total
+      const offset = Math.min(total, Math.max(0, Math.floor(request.offset)))
       const limit = Math.min(PAGE_SIZE, Math.max(0, Math.floor(request.limit)))
-      const pageLength = Math.min(limit, Math.max(0, pageTotal - offset))
-      const createdStart = Math.min(offset, newRecords.length)
-      const createdEnd = Math.min(offset + pageLength, newRecords.length)
-      const pageRecords = newRecords.slice(createdStart, createdEnd)
-      const baseOffset = Math.max(0, offset - newRecords.length)
-      const baseLength = pageLength - pageRecords.length
+      const pageLength = Math.min(limit, Math.max(0, total - offset))
+      const pageRecords: Employee[] = []
+      let manualPointer = 0
+      let manualBefore = 0
 
-      // 二分定位指定頁的基礎資料，避免深頁查詢從第一筆逐列掃描；查詢成本仍會隨變更 ID 數增加。
-      for (let pageIndex = 0; pageIndex < baseLength; pageIndex += 1) {
-        const rank = baseOffset + pageIndex
-        const baseIndex = findBaseIndexByRank(rank, excludedBase, recordCount)
-        pageRecords.push(updated.get(`EMP-${String(baseIndex + 1).padStart(8, '0')}`) ?? createEmployee(baseIndex))
+      // 只記錄被手動移動的列，讀取時覆寫目前頁面的位置，不為千萬筆資料建立重排陣列；成本會隨手動調整筆數增加。
+      for (let position = offset; position < offset + pageLength; position += 1) {
+        while (manualPointer < manualEntries.length) {
+          const entry = manualEntries[manualPointer]
+          if (!entry || entry.position >= position) break
+          manualBefore += 1
+          manualPointer += 1
+        }
+
+        const manualId = manualByPosition.get(position)
+        if (manualId) {
+          const employee = getEmployee(manualId)
+          if (employee) pageRecords.push(employee)
+          continue
+        }
+
+        const unplacedRank = position - manualBefore
+        const createdRecord = newRecords[unplacedRank]
+        if (createdRecord) {
+          pageRecords.push(createdRecord)
+          continue
+        }
+
+        const baseRank = unplacedRank - newRecords.length
+        const baseIndex = findBaseIndexByRank(baseRank, excludedBase, recordCount)
+        const id = `EMP-${String(baseIndex + 1).padStart(8, '0')}`
+        const employee = updated.get(id) ?? createEmployee(baseIndex)
+        pageRecords.push(employee)
       }
-
-      // 每次只生成目前要求的最多 500 筆，不保存千萬筆陣列；全域搜尋/排序仍應交由有索引的正式 API。
-      const pinnedRecords = pinned.flatMap((id) => {
-        const employee = getEmployee(id)
-        return employee ? [employee] : []
-      })
 
       return {
         records: pageRecords,
-        pinnedRecords,
-        total: recordCount - deleted.size + created.size,
+        manualPositions: manualEntries,
+        total,
         pageTotal,
         offset,
         limit,
@@ -181,33 +197,44 @@ export function createMockEmployeeRepository(
       return record
     },
 
-    async delete(id: string): Promise<void> {
+    async delete(id: string, currentPosition: number): Promise<void> {
       if (!getEmployee(id)) throw new Error('找不到要刪除的人員資料。')
+
+      const currentIndex = Math.max(0, Math.floor(currentPosition) - 1)
+      const page = await this.getPage({ offset: currentIndex, limit: 1 })
+      if (page.records[0]?.id !== id) throw new Error('資料位置已變更，請重新確認後再刪除。')
+
+      const totalAfterDelete = recordCount - deleted.size + created.size - 1
+      const outOfRangePin = [...manualPositions].find(
+        ([manualId, position]) => manualId !== id && position >= totalAfterDelete,
+      )
+      if (outOfRangePin) {
+        throw new Error(`刪除後會讓第 ${outOfRangePin[1] + 1} 筆 PIN 超出資料範圍，請先調整 PIN 位置。`)
+      }
 
       if (created.has(id)) created.delete(id)
       else deleted.add(id)
 
-      const pinnedIndex = pinnedIds.indexOf(id)
-      if (pinnedIndex >= 0) pinnedIds.splice(pinnedIndex, 1)
+      updated.delete(id)
+      manualPositions.delete(id)
     },
 
-    async setPinned(id: string, pinned: boolean): Promise<void> {
-      if (!getEmployee(id)) throw new Error('找不到要置頂的人員資料。')
+    async moveToPosition(id: string, currentPosition: number, targetPosition: number): Promise<void> {
+      const currentIndex = Math.max(0, Math.floor(currentPosition) - 1)
+      const page = await this.getPage({ offset: currentIndex, limit: 1 })
+      if (page.records[0]?.id !== id) throw new Error('資料位置已變更，請重新確認後再調整。')
 
-      const pinnedIndex = pinnedIds.indexOf(id)
-      if (pinned && pinnedIndex < 0) pinnedIds.push(id)
-      else if (!pinned && pinnedIndex >= 0) pinnedIds.splice(pinnedIndex, 1)
-    },
+      const boundedTarget = Math.min(page.total - 1, Math.max(0, Math.floor(targetPosition) - 1))
 
-    async movePinned(id: string, direction: 'up' | 'down'): Promise<void> {
-      const currentIndex = pinnedIds.indexOf(id)
-      if (currentIndex < 0) throw new Error('找不到置頂的人員資料。')
+      const occupiedPosition = [...manualPositions].find(
+        ([manualId, position]) => manualId !== id && position === boundedTarget,
+      )
+      if (occupiedPosition) {
+        throw new Error(`第 ${boundedTarget + 1} 筆已被其他資料 PIN，請選擇不同位置。`)
+      }
 
-      const nextIndex = currentIndex + (direction === 'up' ? -1 : 1)
-      if (nextIndex < 0 || nextIndex >= pinnedIds.length) return
-
-      const [recordId] = pinnedIds.splice(currentIndex, 1)
-      if (recordId) pinnedIds.splice(nextIndex, 0, recordId)
+      // PIN 列號是固定位置，只更新本筆的 reservation；其他 PIN 位置不隨一般資料搬動或刪除而位移。
+      manualPositions.set(id, boundedTarget)
     },
   }
 }

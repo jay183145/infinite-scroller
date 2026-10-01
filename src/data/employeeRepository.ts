@@ -17,7 +17,7 @@ export interface EmployeePageRequest {
 
 export interface EmployeePage {
   records: Employee[]
-  pinnedRecords: Employee[]
+  manualPositions: Array<{ id: string; position: number }>
   total: number
   pageTotal: number
   offset: number
@@ -30,7 +30,7 @@ export interface EmployeeRepository {
   getPage(request: EmployeePageRequest): Promise<EmployeePage>
   create(employee: EmployeeDraft): Promise<Employee>
   update(id: string, employee: EmployeeDraft): Promise<Employee>
-  delete(id: string): Promise<void>
-  setPinned(id: string, pinned: boolean): Promise<void>
-  movePinned(id: string, direction: 'up' | 'down'): Promise<void>
+  // 手動位置使用 UI 顯示的 1 起始列號。
+  delete(id: string, currentPosition: number): Promise<void>
+  moveToPosition(id: string, currentPosition: number, targetPosition: number): Promise<void>
 }

@@ -13,15 +13,16 @@ import type { Employee } from '../types/employee'
 
 const datasetSize = ref<number>(DEFAULT_DATASET_SIZE)
 const records = ref<Employee[]>([])
-const pinnedRecords = ref<Employee[]>([])
+const manualPositions = ref(new Map<string, number>())
 const totalRecords = ref(0)
 const pageTotal = ref(0)
 const currentOffset = ref(0)
 const isLoading = ref(false)
 const errorMessage = ref('')
 const dialogOpen = ref(false)
-const dialogMode = ref<'create' | 'edit' | 'delete'>('create')
+const dialogMode = ref<'create' | 'edit' | 'delete' | 'position'>('create')
 const activeEmployee = ref<Employee | null>(null)
+const activePosition = ref(1)
 const dialogError = ref('')
 const isSaving = ref(false)
 const statusMessage = ref('')
@@ -43,10 +44,15 @@ const rangeStart = computed(() => (records.value.length > 0 ? currentOffset.valu
 const rangeEnd = computed(() => currentOffset.value + records.value.length)
 const hasPreviousPage = computed(() => currentOffset.value > 0)
 const hasNextPage = computed(() => rangeEnd.value < pageTotal.value)
-const loadedCount = computed(() => records.value.length + pinnedRecords.value.length)
+const loadedCount = computed(() => records.value.length)
 
 function formatCount(value: number): string {
   return value.toLocaleString('en-US')
+}
+
+function getPinnedPosition(employee: Employee): number | undefined {
+  const position = manualPositions.value.get(employee.id)
+  return position === undefined ? undefined : position + 1
 }
 
 async function loadPage(offset = currentOffset.value): Promise<void> {
@@ -59,7 +65,7 @@ async function loadPage(offset = currentOffset.value): Promise<void> {
     const page = await getRepository().getPage({ offset, limit: PAGE_SIZE })
 
     records.value = page.records
-    pinnedRecords.value = page.pinnedRecords
+    manualPositions.value = new Map(page.manualPositions.map(({ id, position }) => [id, position]))
     totalRecords.value = page.total
     pageTotal.value = page.pageTotal
     currentOffset.value = page.offset
@@ -86,9 +92,14 @@ function goToNextPage(): void {
   if (hasNextPage.value) void loadPage(currentOffset.value + PAGE_SIZE)
 }
 
-function openDialog(mode: 'create' | 'edit' | 'delete', employee: Employee | null = null): void {
+function openDialog(
+  mode: 'create' | 'edit' | 'delete' | 'position',
+  employee: Employee | null = null,
+  position = 1,
+): void {
   dialogMode.value = mode
   activeEmployee.value = employee
+  activePosition.value = position
   dialogError.value = ''
   dialogOpen.value = true
 }
@@ -141,28 +152,32 @@ async function deleteEmployee(id: string): Promise<void> {
   isSaving.value = true
   dialogError.value = ''
   try {
-    await getRepository().delete(id)
+    await getRepository().delete(id, activePosition.value)
     closeDialog()
     statusMessage.value = '人員資料已刪除。'
     await refreshAfterMutation()
-  } catch {
-    dialogError.value = '刪除失敗，請重試。'
+  } catch (error) {
+    dialogError.value = error instanceof Error ? error.message : '刪除失敗，請重試。'
   } finally {
     isSaving.value = false
   }
 }
 
-async function togglePinned(employee: Employee): Promise<void> {
-  const shouldPin = !pinnedRecords.value.some((record) => record.id === employee.id)
-  await getRepository().setPinned(employee.id, shouldPin)
-  statusMessage.value = shouldPin ? `${employee.name} 已置頂。` : `${employee.name} 已取消置頂。`
-  await refreshAfterMutation()
-}
+async function moveEmployeeToPosition(targetPosition: number): Promise<void> {
+  if (!activeEmployee.value) return
 
-async function movePinned(employee: Employee, direction: 'up' | 'down'): Promise<void> {
-  await getRepository().movePinned(employee.id, direction)
-  statusMessage.value = '置頂順序已更新。'
-  await loadPage(currentOffset.value)
+  isSaving.value = true
+  dialogError.value = ''
+  try {
+    await getRepository().moveToPosition(activeEmployee.value.id, activePosition.value, targetPosition)
+    closeDialog()
+    statusMessage.value = `${activeEmployee.value.name} 已移至第 ${formatCount(targetPosition)} 筆。`
+    await loadPage(Math.floor((targetPosition - 1) / PAGE_SIZE) * PAGE_SIZE)
+  } catch (error) {
+    dialogError.value = error instanceof Error ? error.message : '位置調整失敗，請重新載入資料後再試。'
+  } finally {
+    isSaving.value = false
+  }
 }
 
 onMounted(() => {
@@ -238,29 +253,6 @@ onMounted(() => {
           <span class="text-xs text-muted">Mock repository · {{ formatCount(datasetSize) }} records</span>
         </div>
 
-        <section v-if="pinnedRecords.length > 0" aria-label="已置頂人員" class="mb-5 border-y border-line bg-accent-soft/45">
-          <div class="flex items-baseline justify-between gap-3 px-4 py-3">
-            <h3 class="text-sm font-semibold">置頂順序</h3>
-            <span class="text-xs text-muted">{{ formatCount(pinnedRecords.length) }} 筆 · 固定顯示於一般資料上方</span>
-          </div>
-          <ol class="divide-y divide-line/70">
-            <li v-for="(employee, index) in pinnedRecords" :key="employee.id" class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-              <div class="flex min-w-0 items-center gap-3">
-                <span class="w-6 shrink-0 text-xs font-semibold tabular-nums text-accent">{{ String(index + 1).padStart(2, '0') }}</span>
-                <div class="min-w-0">
-                  <p class="truncate text-sm font-medium">{{ employee.name }}</p>
-                  <p class="truncate text-xs text-muted">{{ employee.position }} · {{ employee.location }}</p>
-                </div>
-              </div>
-              <div class="flex shrink-0 items-center gap-1">
-                <button class="rounded px-2 py-1 text-xs font-medium text-accent hover:bg-surface disabled:opacity-40" :disabled="index === 0 || isLoading" :aria-label="`將 ${employee.name} 上移`" @click="movePinned(employee, 'up')">上移</button>
-                <button class="rounded px-2 py-1 text-xs font-medium text-accent hover:bg-surface disabled:opacity-40" :disabled="index === pinnedRecords.length - 1 || isLoading" :aria-label="`將 ${employee.name} 下移`" @click="movePinned(employee, 'down')">下移</button>
-                <button class="rounded px-2 py-1 text-xs font-medium text-muted hover:bg-surface" :aria-label="`取消置頂 ${employee.name}`" @click="togglePinned(employee)">取消置頂</button>
-              </div>
-            </li>
-          </ol>
-        </section>
-
         <p v-if="errorMessage" role="alert" class="mb-3 flex items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {{ errorMessage }}
           <button class="font-semibold underline underline-offset-2" @click="loadPage()">重新載入</button>
@@ -281,17 +273,35 @@ onMounted(() => {
                 </tr>
               </thead>
               <tbody class="divide-y divide-line">
-                <tr v-for="record in records" :key="record.id" class="transition-colors hover:bg-[#f8fbf9]">
-                  <td data-label="姓名" class="whitespace-nowrap px-5 py-4 font-medium">{{ record.name }}</td>
+                <tr
+                  v-for="(record, index) in records"
+                  :key="record.id"
+                  class="transition-colors"
+                  :class="getPinnedPosition(record) ? 'bg-accent-soft hover:bg-accent-soft' : 'hover:bg-[#f8fbf9]'"
+                >
+                  <td data-label="姓名" class="whitespace-nowrap px-5 py-4 font-medium">
+                    <span class="inline-flex flex-wrap items-center gap-2">
+                      {{ record.name }}
+                      <span v-if="getPinnedPosition(record)" class="rounded-full border border-accent/30 bg-surface px-2 py-0.5 text-[0.625rem] font-bold uppercase tracking-wide text-accent">
+                        PIN TO #{{ formatCount(getPinnedPosition(record)!) }}
+                      </span>
+                    </span>
+                  </td>
                   <td data-label="職位" class="whitespace-nowrap px-5 py-4 text-muted">{{ record.position }}</td>
                   <td data-label="地點" class="whitespace-nowrap px-5 py-4 text-muted">{{ record.location }}</td>
                   <td data-label="年齡" class="whitespace-nowrap px-5 py-4 tabular-nums text-muted">{{ record.age }}</td>
                   <td data-label="到職日" class="whitespace-nowrap px-5 py-4 font-mono text-xs text-muted">{{ record.dateStart }}</td>
                   <td data-label="操作" class="px-5 py-3 text-right">
                     <div class="flex flex-wrap justify-end gap-x-3 gap-y-2">
-                      <button class="text-xs font-medium text-accent underline-offset-2 hover:underline" @click="openDialog('edit', record)">編輯</button>
-                      <button class="text-xs font-medium text-accent underline-offset-2 hover:underline" @click="togglePinned(record)">{{ pinnedRecords.some((item) => item.id === record.id) ? '取消置頂' : '置頂' }}</button>
-                      <button class="text-xs font-medium text-red-700 underline-offset-2 hover:underline" @click="openDialog('delete', record)">刪除</button>
+                      <button class="text-xs font-medium text-accent underline-offset-2 hover:underline" @click="openDialog('edit', record, currentOffset + index + 1)">編輯</button>
+                      <button
+                        :class="getPinnedPosition(record) ? 'rounded-md bg-accent px-2 py-1 text-[0.7rem] font-semibold uppercase text-white shadow-sm hover:bg-[#1d6045]' : 'text-xs font-semibold uppercase text-accent underline-offset-2 hover:underline'"
+                        :aria-label="`PIN TO position for ${record.name}`"
+                        @click="openDialog('position', record, currentOffset + index + 1)"
+                      >
+                        {{ getPinnedPosition(record) ? `PIN TO #${formatCount(getPinnedPosition(record)!)}` : 'PIN TO' }}
+                      </button>
+                      <button class="text-xs font-medium text-red-700 underline-offset-2 hover:underline" @click="openDialog('delete', record, currentOffset + index + 1)">刪除</button>
                     </div>
                   </td>
                 </tr>
@@ -332,12 +342,15 @@ onMounted(() => {
       :open="dialogOpen"
       :mode="dialogMode"
       :employee="activeEmployee"
+      :current-position="activePosition"
+      :total-positions="totalRecords"
       :saving="isSaving"
       :error="dialogError"
       @close="closeDialog"
       @create="createEmployee"
       @update="updateEmployee"
       @remove="deleteEmployee"
+      @move-position="moveEmployeeToPosition"
     />
   </div>
 </template>

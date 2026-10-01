@@ -3,12 +3,14 @@ import { ref, watch } from 'vue'
 import type { Employee } from '../types/employee'
 import type { EmployeeDraft } from '../data/employeeRepository'
 
-type DialogMode = 'create' | 'edit' | 'delete'
+type DialogMode = 'create' | 'edit' | 'delete' | 'position'
 
 const props = defineProps<{
   open: boolean
   mode: DialogMode
   employee: Employee | null
+  currentPosition: number
+  totalPositions: number
   saving: boolean
   error: string
 }>()
@@ -18,11 +20,13 @@ const emit = defineEmits<{
   create: [employee: EmployeeDraft]
   update: [employee: EmployeeDraft]
   remove: [id: string]
+  movePosition: [position: number]
 }>()
 
 const dialog = ref<HTMLDialogElement | null>(null)
 const confirmUpdate = ref(false)
 const draft = ref<EmployeeDraft>(emptyDraft())
+const targetPosition = ref(1)
 
 function emptyDraft(): EmployeeDraft {
   return {
@@ -50,6 +54,7 @@ watch(() => props.open, (isOpen) => {
   if (isOpen) {
     resetDraft()
     confirmUpdate.value = false
+    targetPosition.value = props.currentPosition
     if (dialog.value && !dialog.value.open) dialog.value.showModal()
   } else if (dialog.value?.open) {
     dialog.value.close()
@@ -72,6 +77,11 @@ function submitForm(): void {
 function confirmEdit(): void {
   emit('update', { ...draft.value })
 }
+
+function submitPosition(): void {
+  const position = Math.floor(Number(targetPosition.value))
+  emit('movePosition', Math.min(props.totalPositions, Math.max(1, position || 1)))
+}
 </script>
 
 <template>
@@ -85,7 +95,7 @@ function confirmEdit(): void {
       <div>
         <p class="text-xs font-semibold uppercase tracking-[0.1em] text-accent">PEOPLE DIRECTORY</p>
         <h2 id="employee-dialog-title" class="mt-1 text-lg font-semibold">
-          {{ mode === 'create' ? '新增人員' : mode === 'edit' ? (confirmUpdate ? '確認更新' : '編輯人員') : '確認刪除' }}
+          {{ mode === 'create' ? '新增人員' : mode === 'edit' ? (confirmUpdate ? '確認更新' : '編輯人員') : mode === 'position' ? '調整資料位置' : '確認刪除' }}
         </h2>
       </div>
       <button
@@ -99,7 +109,7 @@ function confirmEdit(): void {
       </button>
     </div>
 
-    <form v-if="mode !== 'delete' && !confirmUpdate" class="grid gap-4 px-5 py-5 sm:px-6" @submit.prevent="submitForm">
+    <form v-if="(mode === 'create' || mode === 'edit') && !confirmUpdate" class="grid gap-4 px-5 py-5 sm:px-6" @submit.prevent="submitForm">
       <label class="grid gap-1.5 text-sm font-medium">
         姓名
         <input v-model.trim="draft.name" required maxlength="120" autocomplete="name" class="rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
@@ -144,7 +154,7 @@ function confirmEdit(): void {
         </div>
       </template>
 
-      <template v-else>
+      <template v-else-if="mode === 'edit'">
         <p class="text-sm leading-6 text-muted">即將更新「<span class="font-semibold text-ink">{{ employee?.name }}</span>」的資料，請確認變更內容後再繼續。</p>
         <dl class="grid grid-cols-2 gap-x-4 gap-y-3 rounded-md bg-canvas p-4 text-sm">
           <dt class="text-muted">姓名</dt><dd class="break-words font-medium">{{ draft.name }}</dd>
@@ -161,6 +171,30 @@ function confirmEdit(): void {
           </button>
         </div>
       </template>
+
+      <form v-else class="grid gap-4 px-5 py-5 sm:px-6" @submit.prevent="submitPosition">
+        <p class="text-sm leading-6 text-muted">
+          將「<span class="font-semibold text-ink">{{ employee?.name }}</span>」移至指定列號。其他資料會依序順移，不會互換。
+        </p>
+        <label class="grid gap-1.5 text-sm font-medium">
+          目標位置（第幾筆）
+          <input
+            v-model.number="targetPosition"
+            type="number"
+            min="1"
+            :max="totalPositions"
+            step="1"
+            required
+            class="rounded-md border border-line bg-surface px-3 py-2.5 font-normal tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          >
+        </label>
+        <p class="text-xs text-muted">目前位於第 {{ currentPosition.toLocaleString('en-US') }} 筆，共 {{ totalPositions.toLocaleString('en-US') }} 筆。</p>
+        <p v-if="error" role="alert" class="text-sm text-red-700">{{ error }}</p>
+        <div class="flex justify-end gap-2 border-t border-line pt-4">
+          <button type="button" class="rounded-md border border-line px-4 py-2 text-sm font-medium hover:bg-canvas disabled:opacity-50" :disabled="saving" @click="emit('close')">取消</button>
+          <button type="submit" class="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-[#1d6045] disabled:opacity-50" :disabled="saving || totalPositions < 1">確認調整</button>
+        </div>
+      </form>
     </div>
   </dialog>
 </template>

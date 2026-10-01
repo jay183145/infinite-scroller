@@ -72,43 +72,121 @@ describe('mock employee repository', () => {
     const updatedPage = await repository.getPage({ offset: 0, limit: PAGE_SIZE })
     expect(updatedPage.records[0]?.position).toBe('Staff Security Engineer')
 
-    await repository.delete(created.id)
+    await repository.delete(created.id, 1)
     const afterDelete = await repository.getPage({ offset: 0, limit: PAGE_SIZE })
     expect(afterDelete.total).toBe(1_000)
     expect(afterDelete.records[0]?.id).toBe('EMP-00000001')
   })
 
-  it('keeps pinned rows ordered above the regular paged records', async () => {
+  it('moves a record to an exact position and shifts intervening records', async () => {
     const repository = createMockEmployeeRepository(6)
-    await repository.setPinned('EMP-00000003', true)
-    await repository.setPinned('EMP-00000001', true)
-    await repository.movePinned('EMP-00000001', 'up')
+    await repository.moveToPosition('EMP-00000006', 6, 2)
 
     const page = await repository.getPage({ offset: 0, limit: PAGE_SIZE })
 
-    expect(page.pinnedRecords.map((record) => record.id)).toEqual([
-      'EMP-00000001',
-      'EMP-00000003',
-    ])
     expect(page.records.map((record) => record.id)).toEqual([
+      'EMP-00000001',
+      'EMP-00000006',
       'EMP-00000002',
+      'EMP-00000003',
       'EMP-00000004',
       'EMP-00000005',
-      'EMP-00000006',
+    ])
+    expect(page.manualPositions).toEqual([
+      { id: 'EMP-00000006', position: 1 },
     ])
     expect(page.total).toBe(6)
-    expect(page.pageTotal).toBe(4)
+    expect(page.pageTotal).toBe(6)
+
+    await repository.moveToPosition('EMP-00000002', 3, 5)
+    const reorderedPage = await repository.getPage({ offset: 0, limit: PAGE_SIZE })
+
+    expect(reorderedPage.records.map((record) => record.id)).toEqual([
+      'EMP-00000001',
+      'EMP-00000006',
+      'EMP-00000003',
+      'EMP-00000004',
+      'EMP-00000002',
+      'EMP-00000005',
+    ])
+    expect(page.total).toBe(6)
   })
 
-  it('keeps deep-page positions correct after pinned and deleted rows are excluded', async () => {
+  it('supports multiple independently pinned records and exposes their positions', async () => {
+    const repository = createMockEmployeeRepository(8)
+    await repository.moveToPosition('EMP-00000008', 8, 2)
+    await repository.moveToPosition('EMP-00000006', 7, 4)
+
+    const page = await repository.getPage({ offset: 0, limit: PAGE_SIZE })
+
+    expect(page.records.map((record) => record.id)).toEqual([
+      'EMP-00000001',
+      'EMP-00000008',
+      'EMP-00000002',
+      'EMP-00000006',
+      'EMP-00000003',
+      'EMP-00000004',
+      'EMP-00000005',
+      'EMP-00000007',
+    ])
+    expect(page.manualPositions).toEqual([
+      { id: 'EMP-00000008', position: 1 },
+      { id: 'EMP-00000006', position: 3 },
+    ])
+  })
+
+  it('keeps an existing PIN position fixed when another record moves across it', async () => {
+    const repository = createMockEmployeeRepository(8)
+    await repository.moveToPosition('EMP-00000008', 8, 4)
+    await repository.moveToPosition('EMP-00000007', 8, 2)
+
+    const page = await repository.getPage({ offset: 0, limit: PAGE_SIZE })
+
+    expect(page.records[3]?.id).toBe('EMP-00000008')
+    expect(page.manualPositions.find(({ id }) => id === 'EMP-00000008')?.position).toBe(3)
+  })
+
+  it('keeps an existing PIN position fixed when an earlier record is deleted', async () => {
+    const repository = createMockEmployeeRepository(8)
+    await repository.moveToPosition('EMP-00000008', 8, 4)
+    await repository.delete('EMP-00000002', 2)
+
+    const page = await repository.getPage({ offset: 0, limit: PAGE_SIZE })
+
+    expect(page.records[3]?.id).toBe('EMP-00000008')
+    expect(page.manualPositions.find(({ id }) => id === 'EMP-00000008')?.position).toBe(3)
+  })
+
+  it('records a PIN even when the selected row is already at its target position', async () => {
+    const repository = createMockEmployeeRepository(4)
+    await repository.moveToPosition('EMP-00000004', 4, 4)
+
+    const page = await repository.getPage({ offset: 0, limit: PAGE_SIZE })
+
+    expect(page.manualPositions).toEqual([
+      { id: 'EMP-00000004', position: 3 },
+    ])
+  })
+
+  it('rejects a deletion that would push a fixed PIN beyond the final row', async () => {
+    const repository = createMockEmployeeRepository(4)
+    await repository.moveToPosition('EMP-00000004', 4, 4)
+
+    await expect(repository.delete('EMP-00000001', 1)).rejects.toThrow(
+      '請先調整 PIN 位置',
+    )
+  })
+
+  it('keeps deep-page positions correct after a delete and a manual move', async () => {
     const repository = createMockEmployeeRepository(1_205)
-    await repository.setPinned('EMP-00000001', true)
-    await repository.delete('EMP-00000003')
+    await repository.delete('EMP-00000003', 3)
+    await repository.moveToPosition('EMP-00001205', 1_204, 501)
 
     const page = await repository.getPage({ offset: 500, limit: PAGE_SIZE })
 
     expect(page.records).toHaveLength(500)
-    expect(page.records[0]?.id).toBe('EMP-00000503')
-    expect(page.pageTotal).toBe(1_203)
+    expect(page.records[0]?.id).toBe('EMP-00001205')
+    expect(page.records[1]?.id).toBe('EMP-00000502')
+    expect(page.pageTotal).toBe(1_204)
   })
 })
