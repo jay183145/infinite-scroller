@@ -1,9 +1,24 @@
 import { describe, expect, it } from 'vitest'
 import { DATASET_SIZE_OPTIONS, DEFAULT_DATASET_SIZE, PAGE_SIZE } from './employeeRepository'
-import { compareEmployees, matchesEmployeeSearch } from './employeeQuery'
+import {
+  canReuseEmployeeQueryCache,
+  compareEmployees,
+  EMPLOYEE_QUERY_CACHE_TTL_MS,
+  matchesEmployeeSearch,
+} from './employeeQuery'
 import { createMockEmployeeRepository } from './mockEmployeeRepository'
 
 describe('mock employee repository', () => {
+  it('reuses only a matching query cache before its fixed TTL expires', () => {
+    const cache = { key: 'revision-2|taipei|age|asc', expiresAt: 30_000 }
+
+    expect(canReuseEmployeeQueryCache(cache, cache.key, 29_999)).toBe(true)
+    expect(canReuseEmployeeQueryCache(cache, cache.key, 30_000)).toBe(false)
+    expect(canReuseEmployeeQueryCache(cache, 'revision-3|taipei|age|asc', 1_000)).toBe(false)
+    expect(EMPLOYEE_QUERY_CACHE_TTL_MS).toBe(30_000)
+    expect(canReuseEmployeeQueryCache(undefined, cache.key, 1_000)).toBe(false)
+  })
+
   it('supports all requested dataset sizes without pre-generating their records', async () => {
     for (const { value } of DATASET_SIZE_OPTIONS) {
       const repository = createMockEmployeeRepository(value)

@@ -1,6 +1,11 @@
 import type { Employee } from '../types/employee'
 import { PAGE_SIZE, type EmployeePage } from './employeeRepository'
-import { compareEmployees, createEmployeeSearchMatcher } from './employeeQuery'
+import {
+  canReuseEmployeeQueryCache,
+  compareEmployees,
+  createEmployeeSearchMatcher,
+  EMPLOYEE_QUERY_CACHE_TTL_MS,
+} from './employeeQuery'
 import type {
   EmployeeQueryWorkerMessage,
   EmployeeQueryWorkerRequest,
@@ -16,6 +21,7 @@ interface MatchedPin {
 
 interface QueryCache {
   key: string
+  expiresAt: number
   sortedTokens: Uint32Array
   matchingCount: number
   matchingPins: MatchedPin[]
@@ -101,14 +107,17 @@ function buildQueryCache(request: EmployeeQueryWorkerRequest): QueryCache {
   }
 
   // 只保留一份 Uint32 索引，不在主執行緒建立完整 Employee 陣列；10M 筆最壞約占 40MB，仍不是零成本。
+  const key = JSON.stringify([
+    request.recordCount,
+    request.revision,
+    request.query.search?.trim().toLocaleLowerCase('en-US') ?? '',
+    request.query.sortBy ?? null,
+    request.query.sortDirection ?? 'asc',
+  ])
+
   return {
-    key: JSON.stringify([
-      request.recordCount,
-      request.revision,
-      request.query.search?.trim().toLocaleLowerCase('en-US') ?? '',
-      request.query.sortBy ?? null,
-      request.query.sortDirection ?? 'asc',
-    ]),
+    key,
+    expiresAt: Date.now() + EMPLOYEE_QUERY_CACHE_TTL_MS,
     sortedTokens,
     matchingCount,
     matchingPins,
@@ -180,11 +189,14 @@ workerScope.onmessage = (event) => {
       message.query.sortBy ?? null,
       message.query.sortDirection ?? 'asc',
     ])
-    if (!cache || cache.key !== key) cache = buildQueryCache(message)
+    // 容量維持單筆以限制 Worker 的索引記憶體，快取固定 30 秒且資料 revision/查詢條件必須一致；到期後會重新全量掃描。
+    if (!canReuseEmployeeQueryCache(cache, key, Date.now())) cache = buildQueryCache(message)
+    const activeCache = cache
+    if (!activeCache) throw new Error('無法建立查詢快取。')
 
     workerScope.postMessage({
       requestId: message.requestId,
-      result: makePage(cache, message),
+      result: makePage(activeCache, message),
     })
   } catch (error) {
     workerScope.postMessage({

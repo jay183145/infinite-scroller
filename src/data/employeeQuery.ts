@@ -1,6 +1,21 @@
 import type { Employee } from '../types/employee'
 import type { EmployeeSortField, SortDirection } from './employeeRepository'
 
+export const EMPLOYEE_QUERY_CACHE_TTL_MS = 30_000
+
+export interface EmployeeQueryCacheLease {
+  key: string
+  expiresAt: number
+}
+
+export function canReuseEmployeeQueryCache(
+  cache: EmployeeQueryCacheLease | undefined,
+  key: string,
+  now: number,
+): boolean {
+  return cache !== undefined && cache.key === key && now < cache.expiresAt
+}
+
 const searchableFields: Array<keyof Omit<Employee, 'id'>> = [
   'dataNumber',
   'name',
