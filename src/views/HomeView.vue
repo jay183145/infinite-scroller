@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import EmployeeDialog from '../components/EmployeeDialog.vue'
 import { createMockEmployeeRepository } from '../data/mockEmployeeRepository'
 import {
@@ -13,6 +13,8 @@ import {
   type SortDirection,
 } from '../data/employeeRepository'
 import type { Employee } from '../types/employee'
+
+const SEARCH_DEBOUNCE_MS = 300
 
 const datasetSize = ref<number>(DEFAULT_DATASET_SIZE)
 const records = ref<Employee[]>([])
@@ -36,6 +38,7 @@ const isSaving = ref(false)
 const statusMessage = ref('')
 
 const repositories = new Map<number, EmployeeRepository>()
+let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined
 
 function getRepository(size = datasetSize.value): EmployeeRepository {
   let repository = repositories.get(size)
@@ -66,12 +69,32 @@ function getCurrentQuery(): EmployeeQuery {
   }
 }
 
+function cancelSearchDebounce(): void {
+  if (searchDebounceTimer !== undefined) clearTimeout(searchDebounceTimer)
+  searchDebounceTimer = undefined
+}
+
+watch(searchInput, (value) => {
+  cancelSearchDebounce()
+  const normalizedSearch = value.trim()
+  if (normalizedSearch === activeSearch.value) return
+
+  // 停止輸入 300ms 才觸發一次全域 Worker 查詢，避免每個字元都掃描全資料；不會取消已送出的查詢或快取結果。
+  searchDebounceTimer = setTimeout(() => {
+    searchDebounceTimer = undefined
+    activeSearch.value = normalizedSearch
+    void loadPage(0)
+  }, SEARCH_DEBOUNCE_MS)
+})
+
 function submitSearch(): void {
+  cancelSearchDebounce()
   activeSearch.value = searchInput.value.trim()
   void loadPage(0)
 }
 
 function clearSearch(): void {
+  cancelSearchDebounce()
   searchInput.value = ''
   activeSearch.value = ''
   void loadPage(0)
@@ -226,6 +249,8 @@ async function moveEmployeeToPosition(targetPosition: number): Promise<void> {
 onMounted(() => {
   void loadPage(0)
 })
+
+onBeforeUnmount(cancelSearchDebounce)
 </script>
 
 <template>
