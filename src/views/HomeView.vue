@@ -44,6 +44,10 @@ const SEARCH_PLACEHOLDERS: Record<EmployeeSearchField, string> = {
 }
 const ALL_FIELDS_PLACEHOLDER = '關鍵字，例如 Taipei'
 const ALL_FIELDS_LABEL = '搜尋資料編號、姓名、職位、地點、年齡或到職日'
+// 精簡頁首高度（h-12）；頁首捲到它底下時才切換，兩者重疊時看不出交接。
+const COMPACT_HEADER_PX = 48
+// 固定區各層之間的留白，與 main.css 的遮罩帶高度（0.75rem）一致。
+const STICKY_GAP_PX = 12
 const BUSY_INDICATOR_DELAY_MS = 250
 // 操作結果提示顯示的時間。
 const STATUS_TOAST_MS = 5000
@@ -77,8 +81,10 @@ const tableBody = ref<HTMLElement | null>(null)
 const summarySection = ref<HTMLElement | null>(null)
 const pageHeader = ref<HTMLElement | null>(null)
 const pageTitle = ref<HTMLElement | null>(null)
-const tableTitle = ref<HTMLElement | null>(null)
-const showBackToTop = ref(false)
+const searchInputElement = ref<HTMLInputElement | null>(null)
+// 頁首捲到精簡頁首底下後為 true：顯示精簡頁首與「回到最上方」。
+const pageHeaderScrolledAway = ref(false)
+const tableHead = ref<HTMLElement | null>(null)
 const errorMessage = ref('')
 const dialogOpen = ref(false)
 const dialogMode = ref<'create' | 'edit' | 'delete' | 'position'>('create')
@@ -178,6 +184,9 @@ const searchLabel = computed(() => {
   const label = SORT_FIELDS.find((option) => option.value === searchField.value)?.label
   return label ? `搜尋${label}` : ALL_FIELDS_LABEL
 })
+// 只在有搜尋條件且查詢完成時顯示，避免查詢中顯示上一次的筆數。
+const showSearchResult = computed(() => activeSearch.value !== '' && !isResetting.value)
+const searchResultScope = computed(() => SORT_FIELDS.find((option) => option.value === searchField.value)?.label ?? '全部欄位')
 
 function searchingMessage(): string {
   if (!activeSearch.value) return '正在載入全部資料…'
@@ -426,14 +435,14 @@ async function announce(message: string): Promise<void> {
   }, STATUS_TOAST_MS)
 }
 
-// 重抓期間列上的按鈕會被停用而失去焦點；完成後把焦點放回同一筆資料，找不到（已刪除或不在已載入範圍）就放到同一列號，再不行才回到列表標題。
+// 重抓期間列上的按鈕會被停用而失去焦點；完成後把焦點放回同一筆資料，找不到（已刪除或不在已載入範圍）就放到同一列號，再不行才回到列表上方的搜尋框。
 async function restoreRowFocus(recordId: string | undefined, position: number, action: 'edit' | 'position'): Promise<void> {
   await nextTick()
   const body = tableBody.value
   const target =
     (recordId ? body?.querySelector<HTMLElement>(`tr[data-record-id="${recordId}"] [data-action="${action}"]`) : null) ??
     body?.querySelector<HTMLElement>(`tr[data-row-position="${position}"] [data-action="${action}"]`) ??
-    tableTitle.value
+    searchInputElement.value
   target?.focus()
 }
 
@@ -536,23 +545,29 @@ onMounted(() => {
   )
   if (loadMoreSentinel.value) loadMoreObserver.observe(loadMoreSentinel.value)
 
-  // 摘要固定在頂端會蓋住捲到上緣的列；以實際高度設定 scroll-padding，讓鍵盤焦點與 scrollIntoView 不被遮住。
-  // 手機版摘要排成兩列時，以負的 top 把第一列推出畫面，只固定「目前載入」，並保留列間距作為上方留白。
+  // 固定區由上而下為：精簡頁首、留白、摘要、桌機表頭。表頭固定位置接在摘要下緣（CSS 變數），
+  // scroll-padding 涵蓋整個固定區，讓鍵盤焦點與 scrollIntoView 不被遮住。表頭在卡片版面隱藏時高度為 0。
   summaryResizeObserver = new ResizeObserver(() => {
     const section = summarySection.value
     if (!section) return
-    const lastItem = section.lastElementChild as HTMLElement | null
-    const rowGap = parseFloat(getComputedStyle(section).rowGap) || 0
-    const hiddenHeight = lastItem && lastItem.offsetTop > 0 ? section.clientTop + lastItem.offsetTop - rowGap : 0
-    section.style.top = `${-hiddenHeight}px`
-    document.documentElement.style.scrollPaddingTop = `${section.offsetHeight - hiddenHeight}px`
+    const summaryBottom = (parseFloat(getComputedStyle(section).top) || 0) + section.offsetHeight
+    const headHeight = tableHead.value?.offsetHeight ?? 0
+    // 摘要下方一律保留與上方相同的留白（由摘要的 box-shadow 填成頁面底色）；桌機表頭接在留白之後。
+    const headTop = summaryBottom + STICKY_GAP_PX
+    const rootStyle = document.documentElement.style
+    rootStyle.setProperty('--sticky-table-head-top', `${headTop}px`)
+    rootStyle.scrollPaddingTop = `${headTop + headHeight}px`
   })
   if (summarySection.value) summaryResizeObserver.observe(summarySection.value)
+  if (tableHead.value) summaryResizeObserver.observe(tableHead.value)
 
-  // 頁首捲出視窗後才顯示「回到最上方」；用 IntersectionObserver 判斷，不必另外監聽 scroll。
-  backToTopObserver = new IntersectionObserver((entries) => {
-    showBackToTop.value = !entries.some((entry) => entry.isIntersecting)
-  })
+  // 頁首捲到精簡頁首底下後，顯示精簡頁首與「回到最上方」；用 IntersectionObserver 判斷，不必另外監聽 scroll。
+  backToTopObserver = new IntersectionObserver(
+    (entries) => {
+      pageHeaderScrolledAway.value = !entries.some((entry) => entry.isIntersecting)
+    },
+    { rootMargin: `-${COMPACT_HEADER_PX}px 0px 0px 0px` },
+  )
   if (pageHeader.value) backToTopObserver.observe(pageHeader.value)
   void resetList()
 })
@@ -565,6 +580,7 @@ onBeforeUnmount(() => {
   if (statusTimer !== undefined) clearTimeout(statusTimer)
   if (busyTimer !== undefined) clearTimeout(busyTimer)
   document.documentElement.style.removeProperty('scroll-padding-top')
+  document.documentElement.style.removeProperty('--sticky-table-head-top')
 })
 </script>
 
@@ -574,55 +590,67 @@ onBeforeUnmount(() => {
       <section aria-labelledby="page-title" class="mx-auto flex w-full max-w-370 flex-wrap items-end justify-between gap-4 px-4 py-5 sm:px-6 sm:py-10 lg:px-10">
         <div>
           <p class="text-xs font-semibold uppercase tracking-[0.12em] text-accent">DIRECTORY / PEOPLE</p>
-          <h1 id="page-title" ref="pageTitle" tabindex="-1" class="mt-2 outline-none text-2xl font-semibold leading-tight sm:text-[2rem]">人員資料</h1>
+          <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h1 id="page-title" ref="pageTitle" tabindex="-1" class="outline-none text-2xl font-semibold leading-tight sm:text-[2rem]">人員資料</h1>
+            <!-- 資料性質放在頁首：整頁都是模擬資料，比夾在列表上方更容易注意到。 -->
+            <span class="rounded-full border border-accent/30 bg-surface px-2.5 py-0.5 text-xs font-semibold text-accent">模擬資料</span>
+          </div>
         </div>
         <button class="shrink-0 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-[#1d6045] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" @click="openDialog('create')">新增人員</button>
       </section>
     </header>
 
+    <!-- 精簡頁首：原頁首照常捲走，捲出後才顯示；fixed 不佔版面，切換時內容不會跳動。標題文字已在原頁首，對輔助科技隱藏。 -->
+    <Transition
+      enter-active-class="transition duration-150 motion-reduce:transition-none"
+      leave-active-class="transition duration-150 motion-reduce:transition-none"
+      enter-from-class="opacity-0"
+      leave-to-class="opacity-0"
+    >
+      <div v-show="pageHeaderScrolledAway" data-compact-header class="fixed inset-x-0 top-0 z-30 h-12 border-b border-line bg-accent-soft">
+        <div class="mx-auto flex h-full w-full max-w-370 items-center justify-between gap-3 px-4 sm:px-6 lg:px-10">
+          <p aria-hidden="true" class="flex items-center gap-2 text-base font-semibold">
+            人員資料
+            <span class="rounded-full border border-accent/30 bg-surface px-2 py-px text-[0.6875rem] font-semibold text-accent">模擬資料</span>
+          </p>
+          <button class="shrink-0 rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-white hover:bg-[#1d6045] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" @click="openDialog('create')">新增人員</button>
+        </div>
+      </div>
+    </Transition>
+
     <!-- 底部留白要大於右下角浮動按鈕的高度，捲到底時「載入更多」才不會被蓋住。 -->
     <main class="mx-auto w-full max-w-370 px-4 pb-24 sm:px-6 lg:px-10">
-      <section ref="summarySection" aria-label="資料摘要" class="summary-grid sticky top-0 z-10 mt-4 grid sm:mt-7 grid-cols-3 rounded-md border border-l-4 border-line border-l-accent bg-canvas px-4 sm:px-6">
-        <div class="summary-group contents">
-          <div class="min-w-0 py-3 pr-3 sm:py-5">
-            <!-- 手機寬度：總資料量直接當作資料規模選單，省掉下方獨立的一列；平板以上維持純數字，規模選單在列表上方。 -->
-            <label for="dataset-size-summary" class="block text-xs text-ink/75 sm:hidden">總資料量</label>
-            <select
-              id="dataset-size-summary"
-              name="datasetSizeSummary"
-              :value="datasetSize"
-              :disabled="isResetting"
-              class="mt-2 min-w-0 max-w-full rounded border-0 bg-transparent p-0 text-xl font-semibold leading-7 text-ink tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60 sm:hidden"
-              @change="changeDatasetSize"
-            >
-              <option v-for="option in DATASET_SIZE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-            <!-- 選單值是假資料的基礎筆數；新增、刪除後實際總數會不同，如實列出。 -->
-            <p v-if="totalRecords > 0 && totalRecords !== datasetSize" class="mt-0.5 text-xs text-ink/75 sm:hidden">目前共 {{ formatCount(totalRecords) }} 筆</p>
-            <p class="text-xs text-ink/75 max-sm:hidden sm:text-sm">總資料量</p>
-            <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums max-sm:hidden sm:text-[1.75rem]">{{ formatCount(totalRecords) }}</p>
-          </div>
-          <div class="min-w-0 border-l border-line px-3 py-3 sm:px-6 sm:py-5">
-            <p class="text-xs text-ink/75 sm:text-sm">符合條件</p>
-            <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums sm:text-[1.75rem]">{{ formatCount(matchingRecords) }}</p>
-          </div>
+      <section ref="summarySection" aria-label="資料摘要" class="summary-grid sticky top-15 z-10 mt-4 grid sm:mt-7 grid-cols-2 rounded-md border border-l-4 border-line border-l-accent bg-canvas px-4 sm:px-6">
+        <div class="min-w-0 py-3 pr-3 sm:py-5">
+          <!-- 手機寬度：總資料量直接當作資料規模選單，省掉下方獨立的一列；平板以上維持純數字，規模選單在列表上方。 -->
+          <label for="dataset-size-summary" class="block text-xs text-ink/75 sm:hidden">總資料量</label>
+          <select
+            id="dataset-size-summary"
+            name="datasetSizeSummary"
+            :value="datasetSize"
+            :disabled="isResetting"
+            class="mt-2 min-w-0 max-w-full rounded border-0 bg-transparent p-0 text-xl font-semibold leading-7 text-ink tabular-nums max-[359px]:text-lg outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60 sm:hidden"
+            @change="changeDatasetSize"
+          >
+            <option v-for="option in DATASET_SIZE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+          <!-- 選單值是假資料的基礎筆數；新增、刪除後實際總數會不同，如實列出。 -->
+          <p v-if="totalRecords > 0 && totalRecords !== datasetSize" class="mt-0.5 text-xs text-ink/75 sm:hidden">目前共 {{ formatCount(totalRecords) }} 筆</p>
+          <p class="text-xs text-ink/75 max-sm:hidden sm:text-sm">總資料量</p>
+          <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums max-sm:hidden sm:text-[1.75rem]">{{ formatCount(totalRecords) }}</p>
         </div>
-        <div class="min-w-0 border-l border-line py-4 pl-3 sm:py-5 sm:pl-6">
+        <!-- 符合條件筆數只在搜尋時有意義，改顯示在搜尋框下方；未搜尋時它等於總資料量。 -->
+        <div class="min-w-0 border-l border-line py-3 pl-3 sm:py-5 sm:pl-6">
           <p class="text-xs text-ink/75 sm:text-sm">目前載入</p>
-          <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums sm:text-[1.75rem]">{{ formatCount(loadedCount) }}</p>
+          <p data-summary="loaded" class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums max-[359px]:text-lg sm:text-[1.75rem]">{{ formatCount(loadedCount) }}</p>
         </div>
       </section>
 
       <section aria-labelledby="table-title" class="mt-5 sm:mt-8">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 id="table-title" ref="tableTitle" tabindex="-1" class="text-base font-semibold outline-none">人員目錄</h2>
-            <p v-if="matchingRecords === 0" class="mt-1 text-sm text-muted">沒有符合的資料</p>
-          </div>
-          <span class="text-xs font-medium text-muted">模擬資料 · 每批 {{ PAGE_SIZE }} 筆</span>
-        </div>
+        <!-- 頁首已有「人員資料」大標，畫面上不再重複；標題留給輔助科技做區塊命名與標題導覽。 -->
+        <h2 id="table-title" class="sr-only">人員目錄</h2>
 
-        <form class="mt-3 flex items-stretch gap-2 sm:mt-4 sm:gap-3" role="search" @submit.prevent="submitSearch">
+        <form class="flex items-stretch gap-2 sm:gap-3" role="search" @submit.prevent="submitSearch">
           <!-- 欄位選單與關鍵字共用一個外框：一眼看出是「在哪個欄位搜尋什麼」；焦點框畫在整組外框上。 -->
           <div class="flex min-w-0 flex-1 rounded-md border border-line bg-surface focus-within:ring-2 focus-within:ring-accent">
             <label class="sr-only" for="search-field">搜尋欄位</label>
@@ -639,6 +667,7 @@ onBeforeUnmount(() => {
             <label class="sr-only" for="employee-search">{{ searchLabel }}</label>
             <input
               id="employee-search"
+              ref="searchInputElement"
               v-model="searchInput"
               type="search"
               autocomplete="off"
@@ -664,6 +693,13 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </form>
+
+        <!-- 符合筆數只在搜尋後出現；live region 常駐，結果更新時螢幕閱讀器會朗讀。 -->
+        <p aria-live="polite" class="text-sm text-muted" :class="showSearchResult ? 'mt-2' : ''">
+          <template v-if="showSearchResult">
+            符合「{{ activeSearch }}」（{{ searchResultScope }}）：<strong class="font-semibold text-ink tabular-nums">{{ formatCount(matchingRecords) }}</strong> 筆
+          </template>
+        </p>
 
         <div class="mb-4 mt-2 flex flex-wrap items-center justify-between gap-2 sm:my-4 sm:gap-3">
           <!-- 手機寬度改由上方「總資料量」選擇資料規模。 -->
@@ -713,10 +749,14 @@ onBeforeUnmount(() => {
           <button class="font-semibold underline underline-offset-2" @click="resetList()">重新載入</button>
         </p>
 
-        <div class="mt-4 overflow-hidden rounded-md border border-line bg-surface" :aria-busy="isResetting">
-          <div class="overflow-x-auto">
+        <!--
+          卡片版面（< 1024px）由外框畫邊線與圓角；桌機表格改由儲存格自己畫框（見 main.css），外框不畫，
+          表頭固定後才是一塊獨立的圓角區塊，與摘要之間的留白不會有外框線穿過。overflow-clip 不建立捲動容器，不影響 sticky。
+        -->
+        <div class="mt-4 overflow-clip rounded-md border border-line bg-surface lg:overflow-visible lg:rounded-none lg:border-0 lg:bg-transparent" :aria-busy="isResetting">
+          <div>
             <!-- 虛擬列表只渲染部分列，固定欄寬避免捲動時欄寬隨可見內容跳動。 -->
-            <table class="people-table w-full table-fixed border-collapse text-left text-sm" :aria-rowcount="matchingRecords + 1">
+            <table class="people-table w-full table-fixed border-collapse text-left lg:border-separate lg:border-spacing-0 text-sm" :aria-rowcount="matchingRecords + 1">
               <caption class="sr-only">人員資料，包含資料編號、姓名、職位、地點、年齡與到職日</caption>
               <colgroup>
                 <col class="w-32">
@@ -727,7 +767,7 @@ onBeforeUnmount(() => {
                 <col class="w-24">
                 <col class="w-52">
               </colgroup>
-              <thead class="bg-[#f7f9f7] text-xs font-semibold text-muted">
+              <thead ref="tableHead" class="bg-[#f7f9f7] text-xs font-semibold text-muted">
                 <tr aria-rowindex="1">
                   <!-- 按鈕撐滿整格：整個表頭格都可點，常駐排序圖示讓「可排序」一眼可見，目前排序欄以強調色標示方向。 -->
                   <th
@@ -843,7 +883,7 @@ onBeforeUnmount(() => {
             <template v-if="matchingRecords === 0">沒有符合的資料 · 總資料 {{ formatCount(totalRecords) }} 筆</template>
             <template v-else-if="isLoadingMore">正在載入第 {{ formatCount(loadedCount + 1) }}–{{ formatCount(nextBatchEnd) }} 筆…（已載入 {{ formatCount(loadedCount) }} / {{ formatCount(matchingRecords) }} 筆）</template>
             <template v-else-if="loadMoreError">{{ loadMoreError }}</template>
-            <template v-else-if="hasMore">已載入 {{ formatCount(loadedCount) }} / {{ formatCount(matchingRecords) }} 筆符合（總資料 {{ formatCount(totalRecords) }} 筆）· 向下捲動自動載入</template>
+            <template v-else-if="hasMore">已載入 {{ formatCount(loadedCount) }} / {{ formatCount(matchingRecords) }} 筆符合（總資料 {{ formatCount(totalRecords) }} 筆）· 向下捲動每次自動載入 {{ PAGE_SIZE }} 筆</template>
             <template v-else>已載入全部 {{ formatCount(matchingRecords) }} 筆符合資料（總資料 {{ formatCount(totalRecords) }} 筆）</template>
           </p>
           <button
@@ -913,7 +953,7 @@ onBeforeUnmount(() => {
       leave-to-class="translate-y-2 opacity-0"
     >
       <button
-        v-show="showBackToTop"
+        v-show="pageHeaderScrolledAway"
         type="button"
         aria-label="回到最上方"
         title="回到最上方"

@@ -61,7 +61,7 @@ function spacerHeights(wrapper: VueWrapper): number[] {
 }
 
 function loadedCount(wrapper: VueWrapper): string {
-  return wrapper.findAll('.summary-grid p.tabular-nums')[2]?.text() ?? ''
+  return wrapper.find('[data-summary="loaded"]').text()
 }
 
 async function mountHomeView(): Promise<VueWrapper> {
@@ -208,6 +208,13 @@ describe('HomeView search', () => {
     expect(wrapper.get('#employee-search').attributes('placeholder')).toBe('例如 DATA-00000123')
     expect(wrapper.get('label[for="employee-search"]').text()).toBe('搜尋資料編號')
   })
+
+  it('shows the matching count only after a search, not in the summary', async () => {
+    const wrapper = await mountHomeView()
+
+    expect(wrapper.get('.summary-grid').text()).not.toContain('符合條件')
+    expect(wrapper.get('form[role="search"] + p[aria-live]').text()).toBe('')
+  })
 })
 
 describe('HomeView default sort', () => {
@@ -253,11 +260,16 @@ describe('HomeView back to top', () => {
   it('appears once the page header leaves the viewport and returns focus to the page title', async () => {
     const wrapper = await mountHomeView()
     const button = wrapper.get('button[aria-label="回到最上方"]')
+    const compactHeader = wrapper.get('[data-compact-header]')
     expect(button.isVisible()).toBe(false)
+    expect(compactHeader.isVisible()).toBe(false)
 
+    // 頁首捲走後，精簡頁首與「回到最上方」同時出現。
     setIntersecting(wrapper.get('header').element, false)
     await nextTick()
     expect(button.isVisible()).toBe(true)
+    expect(compactHeader.isVisible()).toBe(true)
+    expect(compactHeader.get('button').text()).toBe('新增人員')
 
     await button.trigger('click')
     expect(layout.scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: 'smooth' })
@@ -266,6 +278,7 @@ describe('HomeView back to top', () => {
     setIntersecting(wrapper.get('header').element, true)
     await nextTick()
     expect(button.isVisible()).toBe(false)
+    expect(compactHeader.isVisible()).toBe(false)
   })
 
   it('jumps to three viewports from the top before gliding when far down the list', async () => {
