@@ -614,7 +614,7 @@ onBeforeUnmount(() => {
               id="search-field"
               name="searchField"
               :value="searchField ?? ''"
-              class="shrink-0 rounded-md border border-line bg-surface px-3 py-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              class="min-w-[calc(5em+2rem)] shrink-0 rounded-md border border-line bg-surface px-3 py-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent"
               @change="changeSearchField"
             >
               <option value="">全部欄位</option>
@@ -645,7 +645,7 @@ onBeforeUnmount(() => {
               name="datasetSize"
               :value="datasetSize"
               :disabled="isResetting"
-              class="rounded-md border border-line bg-surface px-3 py-2 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
+              class="min-w-[9.5em] rounded-md border border-line bg-surface px-3 py-2 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
               @change="changeDatasetSize"
             >
               <option v-for="option in DATASET_SIZE_OPTIONS" :key="option.value" :value="option.value">
@@ -661,7 +661,7 @@ onBeforeUnmount(() => {
                 name="sortField"
                 :value="sortBy ?? ''"
                 :disabled="isResetting"
-                class="rounded-md border border-line bg-surface px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
+                class="min-w-[calc(5em+2rem)] rounded-md border border-line bg-surface px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
                 @change="changeSortField"
               >
                 <option value="">預設順序</option>

@@ -18,6 +18,74 @@
   background: #c7e5d2;
 }
 
+/*
+ * 下拉選單改由頁面自行繪製清單（Chrome 135+ customizable select）。
+ * 原生清單是獨立的小視窗，在 DevTools 裝置模擬縮放下，Chrome 會把視窗大小算錯而留下大塊空白；
+ * 改在頁面內繪製後不再開原生視窗。仍是原生 <select>，鍵盤操作、輔助科技與 change 事件不變；
+ * 不支援的瀏覽器會忽略整段，維持原生選單。
+ */
+@supports (appearance: base-select) {
+  select,
+  ::picker(select) {
+    appearance: base-select;
+  }
+
+  /* 自繪選單依目前選項文字決定寬度（原生選單是取最長選項），各 select 另設 min-width 避免切換選項時寬度跳動。 */
+  select {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+
+  select::picker-icon {
+    color: var(--color-muted);
+    transition: rotate 0.15s;
+  }
+
+  select:open::picker-icon {
+    rotate: 180deg;
+  }
+
+  ::picker(select) {
+    margin-block: 0.25rem;
+    padding: 0.25rem;
+    border: 1px solid var(--color-line);
+    border-radius: 0.375rem;
+    background: var(--color-surface);
+    box-shadow: 0 10px 24px rgb(29 41 35 / 0.14);
+  }
+
+  select option {
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.25rem;
+    color: var(--color-ink);
+    white-space: nowrap;
+  }
+
+  select option:hover,
+  select option:focus-visible {
+    background: var(--color-accent-soft);
+    outline: none;
+  }
+
+  select option:checked {
+    color: var(--color-accent);
+    font-weight: 600;
+  }
+
+  select option::checkmark {
+    color: var(--color-accent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  select::picker-icon {
+    transition: none;
+  }
+}
+
 /* 虛擬列表依固定列距計算位置，資料列高度必須一致；內容較長時以截斷處理，不撐高列。 */
 .people-table tbody tr[data-row-position] {
   height: 3.5rem;
