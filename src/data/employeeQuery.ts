@@ -39,6 +39,10 @@ export function matchesEmployeeSearch(employee: Employee, search: string): boole
   return createEmployeeSearchMatcher(search)(employee)
 }
 
+// 共用 Collator：localeCompare 帶 options 時每次呼叫都會重建比對器，大量比較時成本很高。
+export const employeeCollator = new Intl.Collator('en-US', { numeric: true, sensitivity: 'base' })
+const idCollator = new Intl.Collator('en-US', { numeric: true })
+
 export function compareEmployees(
   left: Employee,
   right: Employee,
@@ -48,11 +52,8 @@ export function compareEmployees(
   const directionFactor = direction === 'asc' ? 1 : -1
   const fieldComparison = sortBy === 'age'
     ? left.age - right.age
-    : String(left[sortBy]).localeCompare(String(right[sortBy]), 'en-US', {
-        numeric: true,
-        sensitivity: 'base',
-      })
+    : employeeCollator.compare(String(left[sortBy]), String(right[sortBy]))
 
   if (fieldComparison !== 0) return fieldComparison * directionFactor
-  return left.id.localeCompare(right.id, 'en-US', { numeric: true })
+  return idCollator.compare(left.id, right.id)
 }

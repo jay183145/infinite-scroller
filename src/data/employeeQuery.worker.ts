@@ -12,6 +12,7 @@ import type {
   EmployeeQueryWorkerResponse,
 } from './employeeQueryProtocol'
 import { createEmployee } from './employeeData'
+import { createEmployeeSorter, MAX_FAST_SORT_CANDIDATES } from './employeeSort'
 
 interface MatchedPin {
   id: string
@@ -70,6 +71,11 @@ function buildQueryCache(request: EmployeeQueryWorkerRequest): QueryCache {
   const candidateTokens = new Uint32Array(request.recordCount + request.created.length)
   const matchingPins: MatchedPin[] = []
   const matchesSearch = createEmployeeSearchMatcher(request.query.search ?? '')
+  const { sortBy, sortDirection = 'asc' } = request.query
+  // 排序鍵在同一次全量掃描中順便算好，不再於每次比較時重建資料；超出快速排序上限時退回比較器排序。
+  const sorter = sortBy && candidateTokens.length <= MAX_FAST_SORT_CANDIDATES
+    ? createEmployeeSorter(sortBy, sortDirection, candidateTokens.length)
+    : undefined
   let matchingCount = 0
 
   const visit = (employee: Employee, token: number): void => {
@@ -77,6 +83,7 @@ function buildQueryCache(request: EmployeeQueryWorkerRequest): QueryCache {
 
     candidateTokens[matchingCount] = token
     matchingCount += 1
+    sorter?.add(employee, token)
     const position = pinPositionById.get(employee.id)
     if (position !== undefined) matchingPins.push({ id: employee.id, position, token })
   }
@@ -92,21 +99,20 @@ function buildQueryCache(request: EmployeeQueryWorkerRequest): QueryCache {
   })
 
   const sortedTokens = candidateTokens.subarray(0, matchingCount)
-  if (request.query.sortBy) {
+  const getEmployee = (token: number) => getEmployeeForToken(token, request, updatedById)
+  if (sorter) {
+    sorter.sort(sortedTokens, getEmployee)
+  } else if (sortBy) {
     sortedTokens.sort((leftToken, rightToken) => {
-      const left = getEmployeeForToken(leftToken, request, updatedById)
-      const right = getEmployeeForToken(rightToken, request, updatedById)
+      const left = getEmployee(leftToken)
+      const right = getEmployee(rightToken)
       if (!left || !right) return leftToken - rightToken
-      return compareEmployees(
-        left,
-        right,
-        request.query.sortBy!,
-        request.query.sortDirection ?? 'asc',
-      )
+      return compareEmployees(left, right, sortBy, sortDirection)
     })
   }
 
-  // 只保留一份 Uint32 索引，不在主執行緒建立完整 Employee 陣列；10M 筆最壞約占 40MB，仍不是零成本。
+  // 快取只保留一份 Uint32 索引，不在主執行緒建立完整 Employee 陣列；10M 筆約占 40MB。
+  // 排序時另需一份 Float64 排序鍵（10M 筆約 80MB），排完即可回收。
   const key = JSON.stringify([
     request.recordCount,
     request.revision,

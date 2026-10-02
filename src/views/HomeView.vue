@@ -23,6 +23,14 @@ const LOAD_AHEAD_PX = 600
 const RENDER_AHEAD_PX = 600
 // 桌機列高由 CSS 固定為 3.5rem；手機卡片列高於首次渲染後實測。
 const ESTIMATED_ROW_PITCH_PX = 56
+const SORT_FIELDS: ReadonlyArray<{ value: EmployeeSortField; label: string }> = [
+  { value: 'dataNumber', label: '資料編號' },
+  { value: 'name', label: '姓名' },
+  { value: 'position', label: '職位' },
+  { value: 'location', label: '地點' },
+  { value: 'age', label: '年齡' },
+  { value: 'dateStart', label: '到職日' },
+]
 // 操作結果提示顯示的時間。
 const STATUS_TOAST_MS = 5000
 // 回到最上方時平滑捲動的最長距離（畫面高的倍數）；更遠的先瞬間跳到這個距離再捲動。
@@ -152,9 +160,29 @@ function sortRecords(field: EmployeeSortField): void {
   void resetList()
 }
 
-function sortIndicator(field: EmployeeSortField): string {
-  if (sortBy.value !== field) return ''
-  return sortDirection.value === 'asc' ? '↑' : '↓'
+// 卡片版面（< 1024px）沒有表頭，改用下拉選單選欄位、按鈕切換正反序。
+function changeSortField(event: Event): void {
+  const value = (event.currentTarget as HTMLSelectElement).value
+  const field = SORT_FIELDS.find((option) => option.value === value)?.value ?? null
+  sortBy.value = field
+  sortDirection.value = 'asc'
+  void resetList()
+}
+
+function toggleSortDirection(): void {
+  if (!sortBy.value) return
+  sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
+  void resetList()
+}
+
+function ariaSort(field: EmployeeSortField): 'ascending' | 'descending' | 'none' {
+  if (sortBy.value !== field) return 'none'
+  return sortDirection.value === 'asc' ? 'ascending' : 'descending'
+}
+
+// 提示點下去會發生什麼：未排序的欄位先正序，已正序的改為反序。
+function sortTitle(field: EmployeeSortField, label: string): string {
+  return sortBy.value === field && sortDirection.value === 'asc' ? `依${label}反序排序` : `依${label}正序排序`
 }
 
 function getPinnedPosition(employee: Employee): number | undefined {
@@ -534,6 +562,8 @@ onBeforeUnmount(() => {
           <label class="flex items-center gap-3 text-sm font-medium text-ink">
             資料規模
             <select
+              id="dataset-size"
+              name="datasetSize"
               :value="datasetSize"
               :disabled="isResetting"
               class="rounded-md border border-line bg-surface px-3 py-2 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
@@ -544,6 +574,30 @@ onBeforeUnmount(() => {
               </option>
             </select>
           </label>
+          <div class="flex items-center gap-2 lg:hidden">
+            <label class="flex items-center gap-3 text-sm font-medium text-ink">
+              排序
+              <select
+                id="sort-field"
+                name="sortField"
+                :value="sortBy ?? ''"
+                :disabled="isResetting"
+                class="rounded-md border border-line bg-surface px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
+                @change="changeSortField"
+              >
+                <option value="">預設順序</option>
+                <option v-for="field in SORT_FIELDS" :key="field.value" :value="field.value">{{ field.label }}</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              class="rounded-md border border-line bg-surface px-3 py-2 text-sm font-medium hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50"
+              :disabled="!sortBy || isResetting"
+              @click="toggleSortDirection"
+            >
+              {{ sortDirection === 'asc' ? '正序' : '反序' }}<span aria-hidden="true"> {{ sortDirection === 'asc' ? '↑' : '↓' }}</span>
+            </button>
+          </div>
           <span class="text-xs text-muted">Mock repository · {{ formatCount(datasetSize) }} records</span>
         </div>
 
@@ -562,29 +616,35 @@ onBeforeUnmount(() => {
                 <col class="w-48">
                 <col>
                 <col class="w-24">
-                <col class="w-16">
+                <col class="w-20">
                 <col class="w-24">
                 <col class="w-52">
               </colgroup>
               <thead class="bg-[#f7f9f7] text-xs font-semibold text-muted">
                 <tr aria-rowindex="1">
-                  <th scope="col" class="py-3.5 pl-5 pr-3" :aria-sort="sortBy === 'dataNumber' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
-                    <button class="font-semibold hover:text-ink" @click="sortRecords('dataNumber')">資料編號 {{ sortIndicator('dataNumber') }}</button>
-                  </th>
-                  <th scope="col" class="px-3 py-3.5" :aria-sort="sortBy === 'name' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
-                    <button class="font-semibold hover:text-ink" @click="sortRecords('name')">姓名 {{ sortIndicator('name') }}</button>
-                  </th>
-                  <th scope="col" class="px-3 py-3.5" :aria-sort="sortBy === 'position' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
-                    <button class="font-semibold hover:text-ink" @click="sortRecords('position')">職位 {{ sortIndicator('position') }}</button>
-                  </th>
-                  <th scope="col" class="px-3 py-3.5" :aria-sort="sortBy === 'location' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
-                    <button class="font-semibold hover:text-ink" @click="sortRecords('location')">地點 {{ sortIndicator('location') }}</button>
-                  </th>
-                  <th scope="col" class="px-3 py-3.5" :aria-sort="sortBy === 'age' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
-                    <button class="font-semibold hover:text-ink" @click="sortRecords('age')">年齡 {{ sortIndicator('age') }}</button>
-                  </th>
-                  <th scope="col" class="px-3 py-3.5" :aria-sort="sortBy === 'dateStart' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
-                    <button class="font-semibold hover:text-ink" @click="sortRecords('dateStart')">到職日 {{ sortIndicator('dateStart') }}</button>
+                  <!-- 按鈕撐滿整格：整個表頭格都可點，常駐排序圖示讓「可排序」一眼可見，目前排序欄以強調色標示方向。 -->
+                  <th
+                    v-for="(field, index) in SORT_FIELDS"
+                    :key="field.value"
+                    scope="col"
+                    class="p-0"
+                    :class="sortBy === field.value ? 'bg-accent-soft' : ''"
+                    :aria-sort="ariaSort(field.value)"
+                  >
+                    <button
+                      type="button"
+                      class="group flex w-full cursor-pointer items-center gap-1.5 whitespace-nowrap py-3.5 text-left font-semibold transition-colors hover:bg-accent-soft hover:text-ink focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
+                      :class="[index === 0 ? 'pl-5 pr-3' : 'px-3', sortBy === field.value ? 'text-accent' : 'text-muted']"
+                      :title="sortTitle(field.value, field.label)"
+                      @click="sortRecords(field.value)"
+                    >
+                      {{ field.label }}
+                      <svg aria-hidden="true" viewBox="0 0 24 24" class="size-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path v-if="sortBy !== field.value" class="opacity-50 transition-opacity group-hover:opacity-100" d="M8 9l4-4 4 4M16 15l-4 4-4-4" />
+                        <path v-else-if="sortDirection === 'asc'" d="M7 14l5-5 5 5" />
+                        <path v-else d="M7 10l5 5 5-5" />
+                      </svg>
+                    </button>
                   </th>
                   <th scope="col" class="py-3.5 pl-3 pr-5 text-right">操作</th>
                 </tr>

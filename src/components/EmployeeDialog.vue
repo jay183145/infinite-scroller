@@ -102,28 +102,28 @@ function submitPosition(): void {
     <form v-if="(mode === 'create' || mode === 'edit') && !confirmUpdate" class="grid gap-4 px-5 py-5 sm:px-6" @submit.prevent="submitForm">
       <label class="grid gap-1.5 text-sm font-medium">
         資料編號
-        <input v-model.trim="draft.dataNumber" required maxlength="32" autocomplete="off" class="rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
+        <input v-model.trim="draft.dataNumber" name="dataNumber" required maxlength="32" autocomplete="off" class="rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
       </label>
       <label class="grid gap-1.5 text-sm font-medium">
         姓名
-        <input v-model.trim="draft.name" required maxlength="120" autocomplete="name" class="rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
+        <input v-model.trim="draft.name" name="name" required maxlength="120" autocomplete="name" class="rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
       </label>
       <label class="grid gap-1.5 text-sm font-medium">
         職位
-        <input v-model.trim="draft.position" required maxlength="120" class="rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
+        <input v-model.trim="draft.position" name="position" required maxlength="120" class="rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
       </label>
       <label class="grid gap-1.5 text-sm font-medium">
         地點
-        <input v-model.trim="draft.location" required maxlength="120" class="rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
+        <input v-model.trim="draft.location" name="location" required maxlength="120" class="rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
       </label>
       <div class="grid grid-cols-2 gap-4">
         <label class="grid gap-1.5 text-sm font-medium">
           年齡
-          <input v-model.number="draft.age" type="number" min="18" max="100" step="1" required class="min-w-0 rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
+          <input v-model.number="draft.age" name="age" type="number" min="18" max="100" step="1" required class="min-w-0 rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
         </label>
         <label class="grid gap-1.5 text-sm font-medium">
           到職日
-          <input v-model="draft.dateStart" type="date" required class="min-w-0 rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
+          <input v-model="draft.dateStart" name="dateStart" type="date" required class="min-w-0 rounded-md border border-line bg-surface px-3 py-2.5 font-normal outline-none focus-visible:ring-2 focus-visible:ring-accent">
         </label>
       </div>
 
@@ -175,6 +175,7 @@ function submitPosition(): void {
           目標位置（第幾筆）
           <input
             v-model.number="targetPosition"
+            name="targetPosition"
             type="number"
             min="1"
             :max="totalPositions"
