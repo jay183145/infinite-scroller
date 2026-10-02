@@ -159,6 +159,33 @@ describe('HomeView action feedback', () => {
   })
 })
 
+describe('HomeView sorting feedback', () => {
+  // 排序交給 Worker；讓 Worker 永不回應，模擬千萬筆排序仍在進行中。
+  class PendingWorker {
+    addEventListener(): void {}
+    postMessage(): void {}
+    terminate(): void {}
+  }
+
+  it('shows what is being sorted once the query takes longer than a moment', async () => {
+    vi.stubGlobal('Worker', PendingWorker)
+    const wrapper = await mountHomeView()
+    const nameHeader = wrapper.findAll('thead th')[1]!
+
+    await nameHeader.get('button').trigger('click')
+    // 短暫的查詢不顯示提示，避免一閃而過。
+    expect(wrapper.get('#action-status').text()).toBe('')
+
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(wrapper.get('#action-status').text()).toBe('正在依姓名正序排序 10,000,000 筆資料…')
+    expect(nameHeader.attributes('aria-sort')).toBe('ascending')
+    expect(nameHeader.find('svg.animate-spin').exists()).toBe(true)
+    expect(wrapper.get('[aria-busy]').attributes('aria-busy')).toBe('true')
+    expect(wrapper.get('tbody').classes()).toContain('opacity-50')
+    expect(wrapper.get('thead').classes()).not.toContain('opacity-50')
+  })
+})
+
 describe('HomeView back to top', () => {
   it('appears once the page header leaves the viewport and returns focus to the page title', async () => {
     const wrapper = await mountHomeView()

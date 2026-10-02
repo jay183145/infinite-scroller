@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import EmployeeDialog from '../components/EmployeeDialog.vue'
+import LoadingSpinner from '../components/LoadingSpinner.vue'
 import { useWindowVirtualRows } from '../composables/useWindowVirtualRows'
 import { createMockEmployeeRepository } from '../data/mockEmployeeRepository'
 import {
@@ -31,6 +32,7 @@ const SORT_FIELDS: ReadonlyArray<{ value: EmployeeSortField; label: string }> = 
   { value: 'age', label: '年齡' },
   { value: 'dateStart', label: '到職日' },
 ]
+const BUSY_INDICATOR_DELAY_MS = 250
 // 操作結果提示顯示的時間。
 const STATUS_TOAST_MS = 5000
 // 回到最上方時平滑捲動的最長距離（畫面高的倍數）；更遠的先瞬間跳到這個距離再捲動。
@@ -48,6 +50,11 @@ const activeSearch = ref('')
 const sortBy = ref<EmployeeSortField | null>(null)
 const sortDirection = ref<SortDirection>('asc')
 const isResetting = ref(false)
+// 重新查詢期間顯示的說明；排序千萬筆需要數秒，要讓使用者知道正在做什麼。
+const busyMessage = ref('')
+// 超過 BUSY_INDICATOR_DELAY_MS 才顯示忙碌提示，未排序的翻頁只要數十毫秒，避免提示一閃而過。
+const showBusy = ref(false)
+let busyTimer: ReturnType<typeof setTimeout> | undefined
 const isLoadingMore = ref(false)
 const loadMoreError = ref('')
 const loadMoreSentinel = ref<HTMLElement | null>(null)
@@ -133,21 +140,44 @@ watch(searchInput, (value) => {
   searchDebounceTimer = setTimeout(() => {
     searchDebounceTimer = undefined
     activeSearch.value = normalizedSearch
-    void resetList()
+    void resetList(getCurrentQuery(), searchingMessage())
   }, SEARCH_DEBOUNCE_MS)
 })
+
+watch(isResetting, (resetting) => {
+  if (busyTimer !== undefined) clearTimeout(busyTimer)
+  busyTimer = undefined
+  if (!resetting) {
+    showBusy.value = false
+    return
+  }
+  busyTimer = setTimeout(() => {
+    busyTimer = undefined
+    showBusy.value = true
+  }, BUSY_INDICATOR_DELAY_MS)
+})
+
+function searchingMessage(): string {
+  return activeSearch.value ? `正在搜尋「${activeSearch.value}」…` : '正在載入全部資料…'
+}
+
+function sortingMessage(): string {
+  const label = SORT_FIELDS.find((option) => option.value === sortBy.value)?.label
+  if (!label) return '正在恢復預設順序…'
+  return `正在依${label}${sortDirection.value === 'asc' ? '正序' : '反序'}排序 ${formatCount(matchingRecords.value)} 筆資料…`
+}
 
 function submitSearch(): void {
   cancelSearchDebounce()
   activeSearch.value = searchInput.value.trim()
-  void resetList()
+  void resetList(getCurrentQuery(), searchingMessage())
 }
 
 function clearSearch(): void {
   cancelSearchDebounce()
   searchInput.value = ''
   activeSearch.value = ''
-  void resetList()
+  void resetList(getCurrentQuery(), searchingMessage())
 }
 
 function sortRecords(field: EmployeeSortField): void {
@@ -157,7 +187,7 @@ function sortRecords(field: EmployeeSortField): void {
     sortBy.value = field
     sortDirection.value = 'asc'
   }
-  void resetList()
+  void resetList(getCurrentQuery(), sortingMessage())
 }
 
 // 卡片版面（< 1024px）沒有表頭，改用下拉選單選欄位、按鈕切換正反序。
@@ -166,13 +196,13 @@ function changeSortField(event: Event): void {
   const field = SORT_FIELDS.find((option) => option.value === value)?.value ?? null
   sortBy.value = field
   sortDirection.value = 'asc'
-  void resetList()
+  void resetList(getCurrentQuery(), sortingMessage())
 }
 
 function toggleSortDirection(): void {
   if (!sortBy.value) return
   sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
-  void resetList()
+  void resetList(getCurrentQuery(), sortingMessage())
 }
 
 function ariaSort(field: EmployeeSortField): 'ascending' | 'descending' | 'none' {
@@ -229,8 +259,9 @@ async function continueLoadingIfNeeded(): Promise<void> {
   if (isSentinelNearViewport()) void loadMore()
 }
 
-async function resetList(query = getCurrentQuery()): Promise<void> {
+async function resetList(query = getCurrentQuery(), message = '正在載入資料…'): Promise<void> {
   const requestId = startListRequest()
+  busyMessage.value = message
   isResetting.value = true
 
   try {
@@ -291,6 +322,7 @@ async function reloadLoadedRange(fromPosition = 1): Promise<void> {
   )
   let nextRecords = records.value.slice(0, offset)
   let lastPage: EmployeePage | undefined
+  busyMessage.value = '正在更新列表…'
   isResetting.value = true
 
   try {
@@ -329,7 +361,7 @@ function changeDatasetSize(event: Event): void {
   if (!DATASET_SIZE_OPTIONS.some((option) => option.value === nextSize)) return
 
   datasetSize.value = nextSize
-  void resetList()
+  void resetList(getCurrentQuery(), `正在切換為 ${formatCount(nextSize)} 筆資料…`)
 }
 
 function openDialog(
@@ -496,6 +528,7 @@ onBeforeUnmount(() => {
   summaryResizeObserver?.disconnect()
   backToTopObserver?.disconnect()
   if (statusTimer !== undefined) clearTimeout(statusTimer)
+  if (busyTimer !== undefined) clearTimeout(busyTimer)
   document.documentElement.style.removeProperty('scroll-padding-top')
 })
 </script>
@@ -555,7 +588,6 @@ onBeforeUnmount(() => {
             <button type="submit" class="rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#1d6045]">搜尋</button>
             <button v-if="activeSearch" type="button" class="rounded-md border border-line px-4 py-2.5 text-sm font-medium hover:bg-canvas" @click="clearSearch">清除</button>
           </div>
-          <span v-if="isResetting" role="status" aria-live="polite" class="text-xs text-muted">正在搜尋或排序…</span>
         </form>
 
         <div class="my-4 flex flex-wrap items-center justify-between gap-3">
@@ -591,11 +623,13 @@ onBeforeUnmount(() => {
             </label>
             <button
               type="button"
-              class="rounded-md border border-line bg-surface px-3 py-2 text-sm font-medium hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50"
+              class="flex items-center gap-1.5 rounded-md border border-line bg-surface px-3 py-2 text-sm font-medium hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50"
               :disabled="!sortBy || isResetting"
               @click="toggleSortDirection"
             >
-              {{ sortDirection === 'asc' ? '正序' : '反序' }}<span aria-hidden="true"> {{ sortDirection === 'asc' ? '↑' : '↓' }}</span>
+              {{ sortDirection === 'asc' ? '正序' : '反序' }}
+              <LoadingSpinner v-if="showBusy && sortBy" class="size-3.5 text-accent" />
+              <span v-else aria-hidden="true">{{ sortDirection === 'asc' ? '↑' : '↓' }}</span>
             </button>
           </div>
           <span class="text-xs text-muted">Mock repository · {{ formatCount(datasetSize) }} records</span>
@@ -606,7 +640,7 @@ onBeforeUnmount(() => {
           <button class="font-semibold underline underline-offset-2" @click="resetList()">重新載入</button>
         </p>
 
-        <div class="mt-4 overflow-hidden rounded-md border border-line bg-surface">
+        <div class="mt-4 overflow-hidden rounded-md border border-line bg-surface" :aria-busy="isResetting">
           <div class="overflow-x-auto">
             <!-- 虛擬列表只渲染部分列，固定欄寬避免捲動時欄寬隨可見內容跳動。 -->
             <table class="people-table w-full table-fixed border-collapse text-left text-sm" :aria-rowcount="matchingRecords + 1">
@@ -639,7 +673,8 @@ onBeforeUnmount(() => {
                       @click="sortRecords(field.value)"
                     >
                       {{ field.label }}
-                      <svg aria-hidden="true" viewBox="0 0 24 24" class="size-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <LoadingSpinner v-if="showBusy && sortBy === field.value" class="size-3.5" />
+                      <svg v-else aria-hidden="true" viewBox="0 0 24 24" class="size-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                         <path v-if="sortBy !== field.value" class="opacity-50 transition-opacity group-hover:opacity-100" d="M8 9l4-4 4 4M16 15l-4 4-4-4" />
                         <path v-else-if="sortDirection === 'asc'" d="M7 14l5-5 5 5" />
                         <path v-else d="M7 10l5 5 5-5" />
@@ -649,7 +684,12 @@ onBeforeUnmount(() => {
                   <th scope="col" class="py-3.5 pl-3 pr-5 text-right">操作</th>
                 </tr>
               </thead>
-              <tbody ref="tableBody" class="divide-y divide-line">
+              <!-- 重新查詢期間只淡化資料列，表示畫面上的資料即將被取代；表頭保持清楚，才看得到排序中的欄位。 -->
+              <tbody
+                ref="tableBody"
+                class="divide-y divide-line transition-opacity motion-reduce:transition-none"
+                :class="showBusy && records.length > 0 ? 'opacity-50' : ''"
+              >
                 <tr v-if="virtualPaddingTop > 0" aria-hidden="true" class="virtual-spacer">
                   <td colspan="7" :style="{ height: `${virtualPaddingTop}px` }"></td>
                 </tr>
@@ -765,8 +805,19 @@ onBeforeUnmount(() => {
       id="action-status"
       role="status"
       aria-live="polite"
-      class="pointer-events-none fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-[max(1rem,env(safe-area-inset-left))] right-20 z-20 flex sm:right-auto"
+      class="pointer-events-none fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-[max(1rem,env(safe-area-inset-left))] right-20 z-20 flex flex-col items-start gap-2 sm:right-auto"
     >
+      <Transition
+        enter-active-class="transition duration-200 motion-reduce:transition-none"
+        leave-active-class="transition duration-200 motion-reduce:transition-none"
+        enter-from-class="translate-y-2 opacity-0"
+        leave-to-class="translate-y-2 opacity-0"
+      >
+        <p v-if="showBusy" class="flex max-w-md items-center gap-2 rounded-md bg-accent px-4 py-3 text-sm font-medium text-white shadow-lg">
+          <LoadingSpinner class="size-4" />
+          {{ busyMessage }}
+        </p>
+      </Transition>
       <Transition
         enter-active-class="transition duration-200 motion-reduce:transition-none"
         leave-active-class="transition duration-200 motion-reduce:transition-none"
