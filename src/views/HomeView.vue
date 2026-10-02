@@ -42,7 +42,7 @@ const SEARCH_PLACEHOLDERS: Record<EmployeeSearchField, string> = {
   age: '完全符合，例如 30',
   dateStart: '例如 2021-10',
 }
-const ALL_FIELDS_PLACEHOLDER = '輸入關鍵字，例如 Taipei'
+const ALL_FIELDS_PLACEHOLDER = '關鍵字，例如 Taipei'
 const ALL_FIELDS_LABEL = '搜尋資料編號、姓名、職位、地點、年齡或到職日'
 const BUSY_INDICATOR_DELAY_MS = 250
 // 操作結果提示顯示的時間。
@@ -570,10 +570,10 @@ onBeforeUnmount(() => {
 <template>
   <div class="min-h-screen bg-surface text-ink">
     <header ref="pageHeader" class="border-b border-line bg-accent-soft">
-      <section aria-labelledby="page-title" class="mx-auto flex w-full max-w-370 flex-wrap items-end justify-between gap-4 px-4 py-8 sm:px-6 sm:py-10 lg:px-10">
+      <section aria-labelledby="page-title" class="mx-auto flex w-full max-w-370 flex-wrap items-end justify-between gap-4 px-4 py-5 sm:px-6 sm:py-10 lg:px-10">
         <div>
           <p class="text-xs font-semibold uppercase tracking-[0.12em] text-accent">DIRECTORY / PEOPLE</p>
-          <h1 id="page-title" ref="pageTitle" tabindex="-1" class="mt-2 outline-none text-[1.75rem] font-semibold leading-tight sm:text-[2rem]">人員資料</h1>
+          <h1 id="page-title" ref="pageTitle" tabindex="-1" class="mt-2 outline-none text-2xl font-semibold leading-tight sm:text-[2rem]">人員資料</h1>
         </div>
         <button class="shrink-0 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-[#1d6045] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" @click="openDialog('create')">新增人員</button>
       </section>
@@ -581,13 +581,27 @@ onBeforeUnmount(() => {
 
     <!-- 底部留白要大於右下角浮動按鈕的高度，捲到底時「載入更多」才不會被蓋住。 -->
     <main class="mx-auto w-full max-w-370 px-4 pb-24 sm:px-6 lg:px-10">
-      <section ref="summarySection" aria-label="資料摘要" class="summary-grid sticky top-0 z-10 mt-7 grid grid-cols-3 rounded-md border border-l-4 border-line border-l-accent bg-canvas px-4 sm:px-6">
+      <section ref="summarySection" aria-label="資料摘要" class="summary-grid sticky top-0 z-10 mt-4 grid sm:mt-7 grid-cols-3 rounded-md border border-l-4 border-line border-l-accent bg-canvas px-4 sm:px-6">
         <div class="summary-group contents">
-          <div class="min-w-0 py-4 pr-3 sm:py-5">
-            <p class="text-xs text-ink/75 sm:text-sm">總資料量</p>
-            <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums sm:text-[1.75rem]">{{ formatCount(totalRecords) }}</p>
+          <div class="min-w-0 py-3 pr-3 sm:py-5">
+            <!-- 手機寬度：總資料量直接當作資料規模選單，省掉下方獨立的一列；平板以上維持純數字，規模選單在列表上方。 -->
+            <label for="dataset-size-summary" class="block text-xs text-ink/75 sm:hidden">總資料量</label>
+            <select
+              id="dataset-size-summary"
+              name="datasetSizeSummary"
+              :value="datasetSize"
+              :disabled="isResetting"
+              class="mt-2 min-w-0 max-w-full rounded border-0 bg-transparent p-0 text-xl font-semibold leading-7 text-ink tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60 sm:hidden"
+              @change="changeDatasetSize"
+            >
+              <option v-for="option in DATASET_SIZE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+            <!-- 選單值是假資料的基礎筆數；新增、刪除後實際總數會不同，如實列出。 -->
+            <p v-if="totalRecords > 0 && totalRecords !== datasetSize" class="mt-0.5 text-xs text-ink/75 sm:hidden">目前共 {{ formatCount(totalRecords) }} 筆</p>
+            <p class="text-xs text-ink/75 max-sm:hidden sm:text-sm">總資料量</p>
+            <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums max-sm:hidden sm:text-[1.75rem]">{{ formatCount(totalRecords) }}</p>
           </div>
-          <div class="min-w-0 border-l border-line px-3 py-4 sm:px-6 sm:py-5">
+          <div class="min-w-0 border-l border-line px-3 py-3 sm:px-6 sm:py-5">
             <p class="text-xs text-ink/75 sm:text-sm">符合條件</p>
             <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums sm:text-[1.75rem]">{{ formatCount(matchingRecords) }}</p>
           </div>
@@ -598,16 +612,16 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section aria-labelledby="table-title" class="mt-8">
+      <section aria-labelledby="table-title" class="mt-5 sm:mt-8">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 id="table-title" ref="tableTitle" tabindex="-1" class="text-base font-semibold outline-none">人員目錄</h2>
             <p v-if="matchingRecords === 0" class="mt-1 text-sm text-muted">沒有符合的資料</p>
           </div>
-          <span class="text-xs font-medium text-muted">每批 {{ PAGE_SIZE }} 筆</span>
+          <span class="text-xs font-medium text-muted">模擬資料 · 每批 {{ PAGE_SIZE }} 筆</span>
         </div>
 
-        <form class="my-4 flex flex-col gap-3 sm:flex-row sm:items-center" role="search" @submit.prevent="submitSearch">
+        <form class="my-3 flex items-center gap-2 sm:my-4 sm:gap-3" role="search" @submit.prevent="submitSearch">
           <div class="flex min-w-0 flex-1 gap-2">
             <label class="sr-only" for="search-field">搜尋欄位</label>
             <select
@@ -632,13 +646,26 @@ onBeforeUnmount(() => {
             >
           </div>
           <div class="flex gap-2">
-            <button type="submit" class="rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#1d6045]">搜尋</button>
-            <button v-if="activeSearch" type="button" class="rounded-md border border-line px-4 py-2.5 text-sm font-medium hover:bg-canvas" @click="clearSearch">清除</button>
+            <!-- 手機寬度只顯示圖示，與搜尋框同一行以節省首屏高度；按鈕文字仍保留給輔助科技作為名稱。 -->
+            <button type="submit" class="flex items-center justify-center rounded-md bg-accent px-3 py-2.5 text-sm font-semibold text-white hover:bg-[#1d6045] sm:px-4">
+              <svg aria-hidden="true" viewBox="0 0 24 24" class="size-5 sm:hidden" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="7" />
+                <path d="M20 20l-3.5-3.5" />
+              </svg>
+              <span class="max-sm:sr-only">搜尋</span>
+            </button>
+            <button v-if="activeSearch" type="button" class="flex items-center justify-center rounded-md border border-line px-3 py-2.5 text-sm font-medium hover:bg-canvas sm:px-4" @click="clearSearch">
+              <svg aria-hidden="true" viewBox="0 0 24 24" class="size-5 sm:hidden" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+              <span class="max-sm:sr-only">清除</span>
+            </button>
           </div>
         </form>
 
-        <div class="my-4 flex flex-wrap items-center justify-between gap-3">
-          <label class="flex items-center gap-3 text-sm font-medium text-ink">
+        <div class="my-3 flex flex-wrap items-center justify-between gap-2 sm:my-4 sm:gap-3">
+          <!-- 手機寬度改由上方「總資料量」選擇資料規模。 -->
+          <label class="flex items-center gap-3 text-sm font-medium text-ink max-sm:hidden">
             資料規模
             <select
               id="dataset-size"
@@ -655,7 +682,7 @@ onBeforeUnmount(() => {
           </label>
           <div class="flex items-center gap-2 lg:hidden">
             <label class="flex items-center gap-3 text-sm font-medium text-ink">
-              排序
+              <span class="max-sm:sr-only">排序</span>
               <select
                 id="sort-field"
                 name="sortField"
@@ -679,7 +706,6 @@ onBeforeUnmount(() => {
               <span v-else aria-hidden="true">{{ sortDirection === 'asc' ? '↑' : '↓' }}</span>
             </button>
           </div>
-          <span class="text-xs text-muted">Mock repository · {{ formatCount(datasetSize) }} records</span>
         </div>
 
         <p v-if="errorMessage" role="alert" class="mb-3 flex items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
