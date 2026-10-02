@@ -406,42 +406,31 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-canvas text-ink">
-    <header class="border-b border-line bg-surface">
-      <div class="mx-auto flex min-h-16 max-w-370 items-center justify-between px-4 sm:px-6 lg:px-10">
-        <div class="flex items-center gap-3">
-          <span class="grid size-8 place-items-center rounded-md bg-accent text-sm font-semibold text-white">P</span>
-          <span class="text-sm font-semibold tracking-[0.08em]">PEOPLE DIRECTORY</span>
-        </div>
-        <span class="rounded-full border border-line px-3 py-1 text-xs font-medium text-muted">本地模擬</span>
-      </div>
-    </header>
-
-    <main class="mx-auto w-full max-w-370 px-4 pb-12 pt-8 sm:px-6 sm:pt-10 lg:px-10">
-      <section aria-labelledby="page-title" class="flex flex-wrap items-end justify-between gap-4">
+  <div class="min-h-screen bg-surface text-ink">
+    <header class="border-b border-line bg-accent-soft">
+      <section aria-labelledby="page-title" class="mx-auto flex w-full max-w-370 flex-wrap items-end justify-between gap-4 px-4 py-8 sm:px-6 sm:py-10 lg:px-10">
         <div>
           <p class="text-xs font-semibold uppercase tracking-[0.12em] text-accent">DIRECTORY / PEOPLE</p>
           <h1 id="page-title" class="mt-2 text-[1.75rem] font-semibold leading-tight sm:text-[2rem]">人員資料</h1>
         </div>
-        <div class="flex items-center gap-3">
-          <p class="text-sm text-muted">固定種子 · 可重現資料</p>
-          <button class="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-[#1d6045] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" @click="openDialog('create')">新增人員</button>
-        </div>
+        <button class="shrink-0 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-[#1d6045] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" @click="openDialog('create')">新增人員</button>
       </section>
+    </header>
 
+    <main class="mx-auto w-full max-w-370 px-4 pb-12 sm:px-6 lg:px-10">
       <p v-if="statusMessage" role="status" aria-live="polite" class="mt-4 text-sm text-accent">{{ statusMessage }}</p>
 
-      <section ref="summarySection" aria-label="資料摘要" class="summary-grid sticky top-0 z-10 mt-7 grid grid-cols-3 border-y border-line bg-canvas">
+      <section ref="summarySection" aria-label="資料摘要" class="summary-grid sticky top-0 z-10 mt-7 grid grid-cols-3 rounded-md border border-l-4 border-line border-l-accent bg-canvas px-4 sm:px-6">
         <div class="min-w-0 py-4 pr-3 sm:py-5">
-          <p class="text-xs text-muted sm:text-sm">總資料量</p>
+          <p class="text-xs text-ink/75 sm:text-sm">總資料量</p>
           <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums sm:text-[1.75rem]">{{ formatCount(totalRecords) }}</p>
         </div>
         <div class="min-w-0 border-l border-line px-3 py-4 sm:px-6 sm:py-5">
-          <p class="text-xs text-muted sm:text-sm">符合條件</p>
+          <p class="text-xs text-ink/75 sm:text-sm">符合條件</p>
           <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums sm:text-[1.75rem]">{{ formatCount(matchingRecords) }}</p>
         </div>
         <div class="min-w-0 border-l border-line py-4 pl-3 sm:py-5 sm:pl-6">
-          <p class="text-xs text-muted sm:text-sm">目前載入</p>
+          <p class="text-xs text-ink/75 sm:text-sm">目前載入</p>
           <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums sm:text-[1.75rem]">{{ formatCount(loadedCount) }}</p>
         </div>
       </section>
