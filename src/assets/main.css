@@ -22,7 +22,7 @@
   height: 3.5rem;
 }
 
-@media (max-width: 639px) {
+@media (max-width: 1023px) {
   .people-table thead,
   .people-table colgroup {
     display: none;
@@ -88,6 +88,18 @@
     flex: 0 0 auto;
     font-size: 0.75rem;
     text-align: left;
+  }
+}
+
+/* 平板寬度的卡片較寬：欄位排成兩欄，避免標籤與值相隔太遠，也讓卡片矮一半。 */
+@media (min-width: 640px) and (max-width: 1023px) {
+  .people-table tbody tr[data-row-position] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 2rem;
+  }
+
+  .people-table tbody tr[data-row-position] td[data-label="操作"] {
+    grid-column: 1 / -1;
   }
 }
 

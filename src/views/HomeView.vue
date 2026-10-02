@@ -520,38 +520,38 @@ onBeforeUnmount(() => {
         <div class="mt-4 overflow-hidden rounded-md border border-line bg-surface">
           <div class="overflow-x-auto">
             <!-- 虛擬列表只渲染部分列，固定欄寬避免捲動時欄寬隨可見內容跳動。 -->
-            <table class="people-table w-full table-fixed border-collapse text-left text-sm sm:min-w-300" :aria-rowcount="matchingRecords + 1">
+            <table class="people-table w-full table-fixed border-collapse text-left text-sm" :aria-rowcount="matchingRecords + 1">
               <caption class="sr-only">人員資料，包含資料編號、姓名、職位、地點、年齡與到職日</caption>
               <colgroup>
-                <col class="w-36">
-                <col class="w-64">
+                <col class="w-32">
+                <col class="w-48">
                 <col>
-                <col class="w-30">
-                <col class="w-22">
-                <col class="w-30">
-                <col class="w-66">
+                <col class="w-24">
+                <col class="w-16">
+                <col class="w-24">
+                <col class="w-52">
               </colgroup>
               <thead class="bg-[#f7f9f7] text-xs font-semibold text-muted">
                 <tr aria-rowindex="1">
-                  <th scope="col" class="px-5 py-3.5" :aria-sort="sortBy === 'dataNumber' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
+                  <th scope="col" class="py-3.5 pl-5 pr-3" :aria-sort="sortBy === 'dataNumber' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
                     <button class="font-semibold hover:text-ink" @click="sortRecords('dataNumber')">資料編號 {{ sortIndicator('dataNumber') }}</button>
                   </th>
-                  <th scope="col" class="px-5 py-3.5" :aria-sort="sortBy === 'name' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
+                  <th scope="col" class="px-3 py-3.5" :aria-sort="sortBy === 'name' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
                     <button class="font-semibold hover:text-ink" @click="sortRecords('name')">姓名 {{ sortIndicator('name') }}</button>
                   </th>
-                  <th scope="col" class="px-5 py-3.5" :aria-sort="sortBy === 'position' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
+                  <th scope="col" class="px-3 py-3.5" :aria-sort="sortBy === 'position' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
                     <button class="font-semibold hover:text-ink" @click="sortRecords('position')">職位 {{ sortIndicator('position') }}</button>
                   </th>
-                  <th scope="col" class="px-5 py-3.5" :aria-sort="sortBy === 'location' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
+                  <th scope="col" class="px-3 py-3.5" :aria-sort="sortBy === 'location' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
                     <button class="font-semibold hover:text-ink" @click="sortRecords('location')">地點 {{ sortIndicator('location') }}</button>
                   </th>
-                  <th scope="col" class="px-5 py-3.5" :aria-sort="sortBy === 'age' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
+                  <th scope="col" class="px-3 py-3.5" :aria-sort="sortBy === 'age' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
                     <button class="font-semibold hover:text-ink" @click="sortRecords('age')">年齡 {{ sortIndicator('age') }}</button>
                   </th>
-                  <th scope="col" class="px-5 py-3.5" :aria-sort="sortBy === 'dateStart' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
+                  <th scope="col" class="px-3 py-3.5" :aria-sort="sortBy === 'dateStart' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
                     <button class="font-semibold hover:text-ink" @click="sortRecords('dateStart')">到職日 {{ sortIndicator('dateStart') }}</button>
                   </th>
-                  <th scope="col" class="px-5 py-3.5 text-right">操作</th>
+                  <th scope="col" class="py-3.5 pl-3 pr-5 text-right">操作</th>
                 </tr>
               </thead>
               <tbody ref="tableBody" class="divide-y divide-line">
@@ -566,21 +566,21 @@ onBeforeUnmount(() => {
                   class="transition-colors"
                   :class="getPinnedPosition(record) ? 'bg-accent-soft hover:bg-accent-soft' : 'hover:bg-[#f8fbf9]'"
                 >
-                  <td data-label="資料編號" class="whitespace-nowrap px-5 py-4 font-mono text-xs text-muted sm:truncate">{{ record.dataNumber }}</td>
-                  <td data-label="姓名" class="whitespace-nowrap px-5 py-4 font-medium">
+                  <td data-label="資料編號" class="whitespace-nowrap py-4 pl-5 pr-3 font-mono text-xs text-muted lg:truncate">{{ record.dataNumber }}</td>
+                  <td data-label="姓名" class="whitespace-nowrap px-3 py-4 font-medium">
                     <span class="flex min-w-0 items-center gap-2">
-                      <span class="truncate">{{ record.name }}</span>
+                      <span class="truncate" :title="record.name">{{ record.name }}</span>
                       <span v-if="getPinnedPosition(record)" class="shrink-0 rounded-full border border-accent/30 bg-surface px-2 py-0.5 text-[0.625rem] font-bold uppercase tracking-wide text-accent">
                         PIN TO #{{ formatCount(getPinnedPosition(record)!) }}
                       </span>
                     </span>
                   </td>
-                  <td data-label="職位" class="whitespace-nowrap px-5 py-4 text-muted sm:truncate">{{ record.position }}</td>
-                  <td data-label="地點" class="whitespace-nowrap px-5 py-4 text-muted sm:truncate">{{ record.location }}</td>
-                  <td data-label="年齡" class="whitespace-nowrap px-5 py-4 tabular-nums text-muted">{{ record.age }}</td>
-                  <td data-label="到職日" class="whitespace-nowrap px-5 py-4 font-mono text-xs text-muted sm:truncate">{{ record.dateStart }}</td>
-                  <td data-label="操作" class="px-5 py-3 text-right">
-                    <div class="flex flex-nowrap items-center justify-end gap-3">
+                  <td data-label="職位" class="whitespace-nowrap px-3 py-4 text-muted lg:truncate" :title="record.position">{{ record.position }}</td>
+                  <td data-label="地點" class="whitespace-nowrap px-3 py-4 text-muted lg:truncate" :title="record.location">{{ record.location }}</td>
+                  <td data-label="年齡" class="whitespace-nowrap px-3 py-4 tabular-nums text-muted">{{ record.age }}</td>
+                  <td data-label="到職日" class="whitespace-nowrap px-3 py-4 font-mono text-xs text-muted lg:truncate">{{ record.dateStart }}</td>
+                  <td data-label="操作" class="py-3 pl-3 pr-5 text-right">
+                    <div class="flex flex-nowrap items-center justify-end gap-2">
                       <button class="text-xs font-medium text-accent underline-offset-2 hover:underline disabled:opacity-50" :disabled="isResetting" @click="openDialog('edit', record, position)">編輯</button>
                       <button
                         :class="getPinnedPosition(record) ? 'rounded-md bg-accent px-2 py-1 text-[0.7rem] font-semibold uppercase text-white shadow-sm hover:bg-[#1d6045]' : 'text-xs font-semibold uppercase text-accent underline-offset-2 hover:underline'"
