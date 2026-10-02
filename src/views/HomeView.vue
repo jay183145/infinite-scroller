@@ -389,9 +389,15 @@ onMounted(() => {
   if (loadMoreSentinel.value) loadMoreObserver.observe(loadMoreSentinel.value)
 
   // 摘要固定在頂端會蓋住捲到上緣的列；以實際高度設定 scroll-padding，讓鍵盤焦點與 scrollIntoView 不被遮住。
+  // 手機版摘要排成兩列時，以負的 top 把第一列推出畫面，只固定「目前載入」，並保留列間距作為上方留白。
   summaryResizeObserver = new ResizeObserver(() => {
-    const height = summarySection.value?.offsetHeight ?? 0
-    document.documentElement.style.scrollPaddingTop = `${height}px`
+    const section = summarySection.value
+    if (!section) return
+    const lastItem = section.lastElementChild as HTMLElement | null
+    const rowGap = parseFloat(getComputedStyle(section).rowGap) || 0
+    const hiddenHeight = lastItem && lastItem.offsetTop > 0 ? section.clientTop + lastItem.offsetTop - rowGap : 0
+    section.style.top = `${-hiddenHeight}px`
+    document.documentElement.style.scrollPaddingTop = `${section.offsetHeight - hiddenHeight}px`
   })
   if (summarySection.value) summaryResizeObserver.observe(summarySection.value)
   void resetList()
@@ -421,13 +427,15 @@ onBeforeUnmount(() => {
       <p v-if="statusMessage" role="status" aria-live="polite" class="mt-4 text-sm text-accent">{{ statusMessage }}</p>
 
       <section ref="summarySection" aria-label="資料摘要" class="summary-grid sticky top-0 z-10 mt-7 grid grid-cols-3 rounded-md border border-l-4 border-line border-l-accent bg-canvas px-4 sm:px-6">
-        <div class="min-w-0 py-4 pr-3 sm:py-5">
-          <p class="text-xs text-ink/75 sm:text-sm">總資料量</p>
-          <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums sm:text-[1.75rem]">{{ formatCount(totalRecords) }}</p>
-        </div>
-        <div class="min-w-0 border-l border-line px-3 py-4 sm:px-6 sm:py-5">
-          <p class="text-xs text-ink/75 sm:text-sm">符合條件</p>
-          <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums sm:text-[1.75rem]">{{ formatCount(matchingRecords) }}</p>
+        <div class="summary-group contents">
+          <div class="min-w-0 py-4 pr-3 sm:py-5">
+            <p class="text-xs text-ink/75 sm:text-sm">總資料量</p>
+            <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums sm:text-[1.75rem]">{{ formatCount(totalRecords) }}</p>
+          </div>
+          <div class="min-w-0 border-l border-line px-3 py-4 sm:px-6 sm:py-5">
+            <p class="text-xs text-ink/75 sm:text-sm">符合條件</p>
+            <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums sm:text-[1.75rem]">{{ formatCount(matchingRecords) }}</p>
+          </div>
         </div>
         <div class="min-w-0 border-l border-line py-4 pl-3 sm:py-5 sm:pl-6">
           <p class="text-xs text-ink/75 sm:text-sm">目前載入</p>
