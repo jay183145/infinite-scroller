@@ -90,12 +90,12 @@ function submitPosition(): void {
   <dialog
     ref="dialog"
     aria-labelledby="employee-dialog-title"
-    class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[34rem] overflow-y-auto rounded-md border border-line bg-surface p-0 text-ink shadow-2xl backdrop:bg-ink/35"
+    class="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-136 overflow-y-auto rounded-md border border-line bg-surface p-0 text-ink shadow-2xl backdrop:bg-ink/35"
     @cancel.prevent="emit('close')"
   >
     <div class="flex items-start justify-between gap-4 border-b border-line px-5 py-4 sm:px-6">
       <div>
-        <p class="text-xs font-semibold uppercase tracking-[0.1em] text-accent">PEOPLE DIRECTORY</p>
+        <p class="text-xs font-semibold uppercase tracking-widest text-accent">PEOPLE DIRECTORY</p>
         <h2 id="employee-dialog-title" class="mt-1 text-lg font-semibold">
           {{ mode === 'create' ? '新增人員' : mode === 'edit' ? (confirmUpdate ? '確認更新' : '編輯人員') : mode === 'position' ? '調整資料位置' : '確認刪除' }}
         </h2>
@@ -163,10 +163,10 @@ function submitPosition(): void {
       <template v-else-if="mode === 'edit'">
         <p class="text-sm leading-6 text-muted">即將更新「<span class="font-semibold text-ink">{{ employee?.name }}</span>」的資料，請確認變更內容後再繼續。</p>
         <dl class="grid grid-cols-2 gap-x-4 gap-y-3 rounded-md bg-canvas p-4 text-sm">
-          <dt class="text-muted">資料編號</dt><dd class="break-words font-medium">{{ draft.dataNumber }}</dd>
-          <dt class="text-muted">姓名</dt><dd class="break-words font-medium">{{ draft.name }}</dd>
-          <dt class="text-muted">職位</dt><dd class="break-words font-medium">{{ draft.position }}</dd>
-          <dt class="text-muted">地點</dt><dd class="break-words font-medium">{{ draft.location }}</dd>
+          <dt class="text-muted">資料編號</dt><dd class="wrap-break-word font-medium">{{ draft.dataNumber }}</dd>
+          <dt class="text-muted">姓名</dt><dd class="wrap-break-word font-medium">{{ draft.name }}</dd>
+          <dt class="text-muted">職位</dt><dd class="wrap-break-word font-medium">{{ draft.position }}</dd>
+          <dt class="text-muted">地點</dt><dd class="wrap-break-word font-medium">{{ draft.location }}</dd>
           <dt class="text-muted">年齡</dt><dd class="font-medium tabular-nums">{{ draft.age }}</dd>
           <dt class="text-muted">到職日</dt><dd class="font-medium tabular-nums">{{ draft.dateStart }}</dd>
         </dl>

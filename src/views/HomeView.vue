@@ -408,7 +408,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="min-h-screen bg-canvas text-ink">
     <header class="border-b border-line bg-surface">
-      <div class="mx-auto flex min-h-16 max-w-[1480px] items-center justify-between px-4 sm:px-6 lg:px-10">
+      <div class="mx-auto flex min-h-16 max-w-370 items-center justify-between px-4 sm:px-6 lg:px-10">
         <div class="flex items-center gap-3">
           <span class="grid size-8 place-items-center rounded-md bg-accent text-sm font-semibold text-white">P</span>
           <span class="text-sm font-semibold tracking-[0.08em]">PEOPLE DIRECTORY</span>
@@ -417,7 +417,7 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <main class="mx-auto w-full max-w-[1480px] px-4 pb-12 pt-8 sm:px-6 sm:pt-10 lg:px-10">
+    <main class="mx-auto w-full max-w-370 px-4 pb-12 pt-8 sm:px-6 sm:pt-10 lg:px-10">
       <section aria-labelledby="page-title" class="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p class="text-xs font-semibold uppercase tracking-[0.12em] text-accent">DIRECTORY / PEOPLE</p>
@@ -499,16 +499,16 @@ onBeforeUnmount(() => {
         <div class="mt-4 overflow-hidden rounded-md border border-line bg-surface">
           <div class="overflow-x-auto">
             <!-- 虛擬列表只渲染部分列，固定欄寬避免捲動時欄寬隨可見內容跳動。 -->
-            <table class="people-table w-full table-fixed border-collapse text-left text-sm sm:min-w-[75rem]" :aria-rowcount="matchingRecords + 1">
+            <table class="people-table w-full table-fixed border-collapse text-left text-sm sm:min-w-300" :aria-rowcount="matchingRecords + 1">
               <caption class="sr-only">人員資料，包含資料編號、姓名、職位、地點、年齡與到職日</caption>
               <colgroup>
-                <col class="w-[9rem]">
-                <col class="w-[16rem]">
+                <col class="w-36">
+                <col class="w-64">
                 <col>
-                <col class="w-[7.5rem]">
-                <col class="w-[5.5rem]">
-                <col class="w-[7.5rem]">
-                <col class="w-[16.5rem]">
+                <col class="w-30">
+                <col class="w-22">
+                <col class="w-30">
+                <col class="w-66">
               </colgroup>
               <thead class="bg-[#f7f9f7] text-xs font-semibold text-muted">
                 <tr aria-rowindex="1">
