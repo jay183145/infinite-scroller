@@ -23,6 +23,8 @@ const LOAD_AHEAD_PX = 600
 const RENDER_AHEAD_PX = 600
 // 桌機列高由 CSS 固定為 3.5rem；手機卡片列高於首次渲染後實測。
 const ESTIMATED_ROW_PITCH_PX = 56
+// 回到最上方時平滑捲動的最長距離（畫面高的倍數）；更遠的先瞬間跳到這個距離再捲動。
+const BACK_TO_TOP_GLIDE_VIEWPORTS = 3
 
 const datasetSize = ref<number>(DEFAULT_DATASET_SIZE)
 // 列資料只會整批取代或附加，不會就地修改；shallowRef 避免累積上萬筆時為每筆建立深層 proxy。
@@ -385,6 +387,9 @@ async function moveEmployeeToPosition(targetPosition: number): Promise<void> {
 
 function scrollToTop(): void {
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const glideDistance = window.innerHeight * BACK_TO_TOP_GLIDE_VIEWPORTS
+  // 遠距離先瞬間跳到 glideDistance，只平滑捲動最後一段，避免一路經過大量虛擬列、每幀重新渲染。
+  if (!reduceMotion && window.scrollY > glideDistance) window.scrollTo({ top: glideDistance })
   window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' })
   // 回到頂端後按鈕會隱藏；把焦點移到頁面標題，鍵盤使用者才不會失去焦點位置。
   pageTitle.value?.focus({ preventScroll: true })

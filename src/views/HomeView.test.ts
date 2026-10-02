@@ -145,4 +145,21 @@ describe('HomeView back to top', () => {
     await nextTick()
     expect(button.isVisible()).toBe(false)
   })
+
+  it('jumps to three viewports from the top before gliding when far down the list', async () => {
+    const wrapper = await mountHomeView()
+    const button = wrapper.get('button[aria-label="回到最上方"]')
+
+    // 距離在三個畫面高以內：直接平滑捲動。
+    layout.scrollWindowTo(VIEWPORT_HEIGHT * 3)
+    layout.scrollTo.mockClear()
+    await button.trigger('click')
+    expect(layout.scrollTo.mock.calls).toEqual([[{ top: 0, behavior: 'smooth' }]])
+
+    // 距離較遠：先瞬間跳到三個畫面高的位置，只平滑捲動最後一段。
+    layout.scrollWindowTo(20_000)
+    layout.scrollTo.mockClear()
+    await button.trigger('click')
+    expect(layout.scrollTo.mock.calls).toEqual([[{ top: VIEWPORT_HEIGHT * 3 }], [{ top: 0, behavior: 'smooth' }]])
+  })
 })
