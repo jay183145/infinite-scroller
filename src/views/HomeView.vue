@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import EmployeeDialog from '../components/EmployeeDialog.vue'
+import { useWindowVirtualRows } from '../composables/useWindowVirtualRows'
 import { createMockEmployeeRepository } from '../data/mockEmployeeRepository'
 import {
   DATASET_SIZE_OPTIONS,
@@ -18,6 +19,10 @@ import type { Employee } from '../types/employee'
 const SEARCH_DEBOUNCE_MS = 300
 // 底部 sentinel 進入視窗下方 600px 內就先載入下一批，避免捲到底才看到空白。
 const LOAD_AHEAD_PX = 600
+// 虛擬列表在視窗上下各多渲染 600px 的列，快速捲動時不會先看到空白。
+const RENDER_AHEAD_PX = 600
+// 桌機列高由 CSS 固定為 3.5rem；手機卡片列高於首次渲染後實測。
+const ESTIMATED_ROW_PITCH_PX = 56
 
 const datasetSize = ref<number>(DEFAULT_DATASET_SIZE)
 // 列資料只會整批取代或附加，不會就地修改；shallowRef 避免累積上萬筆時為每筆建立深層 proxy。
@@ -61,6 +66,26 @@ function getRepository(size = datasetSize.value): EmployeeRepository {
 const loadedCount = computed(() => records.value.length)
 const hasMore = computed(() => loadedCount.value < pageTotal.value)
 const nextBatchEnd = computed(() => Math.min(loadedCount.value + PAGE_SIZE, pageTotal.value))
+
+const {
+  visibleStart,
+  visibleEnd,
+  paddingTop: virtualPaddingTop,
+  paddingBottom: virtualPaddingBottom,
+  scrollToIndex,
+} = useWindowVirtualRows({
+  container: tableBody,
+  count: () => records.value.length,
+  rowSelector: '[data-row-position]',
+  estimatedRowPitch: ESTIMATED_ROW_PITCH_PX,
+  overscanPx: RENDER_AHEAD_PX,
+})
+
+const visibleRows = computed(() =>
+  records.value
+    .slice(visibleStart.value, visibleEnd.value)
+    .map((record, index) => ({ record, position: visibleStart.value + index + 1 })),
+)
 
 function formatCount(value: number): string {
   return value.toLocaleString('en-US')
@@ -245,7 +270,10 @@ async function reloadLoadedRange(fromPosition = 1): Promise<void> {
   }
 }
 
-function scrollToPosition(position: number): void {
+// 目標列可能尚未渲染：先依列高捲到附近讓虛擬列表渲染該列，再以實際元素置中。
+async function scrollToPosition(position: number): Promise<void> {
+  scrollToIndex(position - 1)
+  await nextTick()
   tableBody.value
     ?.querySelector(`[data-row-position="${position}"]`)
     ?.scrollIntoView({ block: 'center' })
@@ -337,10 +365,9 @@ async function moveEmployeeToPosition(targetPosition: number): Promise<void> {
     const name = activeEmployee.value.name
     if (targetPosition <= records.value.length) {
       statusMessage.value = `${name} 已移至第 ${formatCount(targetPosition)} 筆。`
-      await nextTick()
-      scrollToPosition(targetPosition)
+      await scrollToPosition(targetPosition)
     } else {
-      // 尚無虛擬列表，不為了跳到遠處一次載入大量列；繼續往下捲動即可看到。
+      // 虛擬列表只涵蓋已依序載入的範圍，不為了跳到遠處一次載入大量列；繼續往下捲動即可看到。
       statusMessage.value = `${name} 已移至第 ${formatCount(targetPosition)} 筆（尚未載入到該位置）。`
     }
   } catch (error) {
@@ -460,10 +487,20 @@ onBeforeUnmount(() => {
 
         <div class="mt-4 overflow-hidden rounded-md border border-line bg-surface">
           <div class="overflow-x-auto">
-            <table class="people-table w-full border-collapse text-left text-sm">
+            <!-- 虛擬列表只渲染部分列，固定欄寬避免捲動時欄寬隨可見內容跳動。 -->
+            <table class="people-table w-full table-fixed border-collapse text-left text-sm sm:min-w-[75rem]" :aria-rowcount="matchingRecords + 1">
               <caption class="sr-only">人員資料，包含資料編號、姓名、職位、地點、年齡與到職日</caption>
+              <colgroup>
+                <col class="w-[9rem]">
+                <col class="w-[16rem]">
+                <col>
+                <col class="w-[7.5rem]">
+                <col class="w-[5.5rem]">
+                <col class="w-[7.5rem]">
+                <col class="w-[16.5rem]">
+              </colgroup>
               <thead class="bg-[#f7f9f7] text-xs font-semibold text-muted">
-                <tr>
+                <tr aria-rowindex="1">
                   <th scope="col" class="px-5 py-3.5" :aria-sort="sortBy === 'dataNumber' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'">
                     <button class="font-semibold hover:text-ink" @click="sortRecords('dataNumber')">資料編號 {{ sortIndicator('dataNumber') }}</button>
                   </th>
@@ -486,40 +523,47 @@ onBeforeUnmount(() => {
                 </tr>
               </thead>
               <tbody ref="tableBody" class="divide-y divide-line">
+                <tr v-if="virtualPaddingTop > 0" aria-hidden="true" class="virtual-spacer">
+                  <td colspan="7" :style="{ height: `${virtualPaddingTop}px` }"></td>
+                </tr>
                 <tr
-                  v-for="(record, index) in records"
+                  v-for="{ record, position } in visibleRows"
                   :key="record.id"
-                  :data-row-position="index + 1"
+                  :data-row-position="position"
+                  :aria-rowindex="position + 1"
                   class="transition-colors"
                   :class="getPinnedPosition(record) ? 'bg-accent-soft hover:bg-accent-soft' : 'hover:bg-[#f8fbf9]'"
                 >
-                  <td data-label="資料編號" class="whitespace-nowrap px-5 py-4 font-mono text-xs text-muted">{{ record.dataNumber }}</td>
+                  <td data-label="資料編號" class="whitespace-nowrap px-5 py-4 font-mono text-xs text-muted sm:truncate">{{ record.dataNumber }}</td>
                   <td data-label="姓名" class="whitespace-nowrap px-5 py-4 font-medium">
-                    <span class="inline-flex flex-wrap items-center gap-2">
-                      {{ record.name }}
-                      <span v-if="getPinnedPosition(record)" class="rounded-full border border-accent/30 bg-surface px-2 py-0.5 text-[0.625rem] font-bold uppercase tracking-wide text-accent">
+                    <span class="flex min-w-0 items-center gap-2">
+                      <span class="truncate">{{ record.name }}</span>
+                      <span v-if="getPinnedPosition(record)" class="shrink-0 rounded-full border border-accent/30 bg-surface px-2 py-0.5 text-[0.625rem] font-bold uppercase tracking-wide text-accent">
                         PIN TO #{{ formatCount(getPinnedPosition(record)!) }}
                       </span>
                     </span>
                   </td>
-                  <td data-label="職位" class="whitespace-nowrap px-5 py-4 text-muted">{{ record.position }}</td>
-                  <td data-label="地點" class="whitespace-nowrap px-5 py-4 text-muted">{{ record.location }}</td>
+                  <td data-label="職位" class="whitespace-nowrap px-5 py-4 text-muted sm:truncate">{{ record.position }}</td>
+                  <td data-label="地點" class="whitespace-nowrap px-5 py-4 text-muted sm:truncate">{{ record.location }}</td>
                   <td data-label="年齡" class="whitespace-nowrap px-5 py-4 tabular-nums text-muted">{{ record.age }}</td>
-                  <td data-label="到職日" class="whitespace-nowrap px-5 py-4 font-mono text-xs text-muted">{{ record.dateStart }}</td>
+                  <td data-label="到職日" class="whitespace-nowrap px-5 py-4 font-mono text-xs text-muted sm:truncate">{{ record.dateStart }}</td>
                   <td data-label="操作" class="px-5 py-3 text-right">
-                    <div class="flex flex-wrap justify-end gap-x-3 gap-y-2">
-                      <button class="text-xs font-medium text-accent underline-offset-2 hover:underline disabled:opacity-50" :disabled="isResetting" @click="openDialog('edit', record, index + 1)">編輯</button>
+                    <div class="flex flex-nowrap items-center justify-end gap-3">
+                      <button class="text-xs font-medium text-accent underline-offset-2 hover:underline disabled:opacity-50" :disabled="isResetting" @click="openDialog('edit', record, position)">編輯</button>
                       <button
                         :class="getPinnedPosition(record) ? 'rounded-md bg-accent px-2 py-1 text-[0.7rem] font-semibold uppercase text-white shadow-sm hover:bg-[#1d6045]' : 'text-xs font-semibold uppercase text-accent underline-offset-2 hover:underline'"
                         :aria-label="`PIN TO position for ${record.name}`"
                         :disabled="isResetting"
-                        @click="openDialog('position', record, index + 1)"
+                        @click="openDialog('position', record, position)"
                       >
                         {{ getPinnedPosition(record) ? `PIN TO #${formatCount(getPinnedPosition(record)!)}` : 'PIN TO' }}
                       </button>
-                      <button class="text-xs font-medium text-red-700 underline-offset-2 hover:underline disabled:opacity-50" :disabled="isResetting" @click="openDialog('delete', record, index + 1)">刪除</button>
+                      <button class="text-xs font-medium text-red-700 underline-offset-2 hover:underline disabled:opacity-50" :disabled="isResetting" @click="openDialog('delete', record, position)">刪除</button>
                     </div>
                   </td>
+                </tr>
+                <tr v-if="virtualPaddingBottom > 0" aria-hidden="true" class="virtual-spacer">
+                  <td colspan="7" :style="{ height: `${virtualPaddingBottom}px` }"></td>
                 </tr>
                 <tr v-if="isResetting && records.length === 0">
                   <td colspan="7" class="px-5 py-12 text-center text-sm text-muted" role="status">正在載入資料…</td>
