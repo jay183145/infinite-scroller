@@ -410,8 +410,9 @@ async function createEmployee(employee: EmployeeDraft): Promise<void> {
   try {
     const created = await getRepository().create(employee)
     closeDialog()
+    // 列表重抓完才提示：有排序或搜尋時重抓需數秒，先提示會在列表更新前就消失；重抓期間由忙碌提示說明進度。
+    await resetList(getCurrentQuery(), '正在更新列表…')
     void announce('人員資料已新增。')
-    await resetList()
     await restoreRowFocus(created.id, 1, 'edit')
   } catch {
     dialogError.value = '新增失敗，請檢查資料後重試。'
@@ -428,9 +429,9 @@ async function updateEmployee(employee: EmployeeDraft): Promise<void> {
   try {
     await getRepository().update(activeEmployee.value.id, employee)
     closeDialog()
-    void announce('人員資料已更新。')
     // 有排序時，改值可能讓這筆移到更前面，需從第一批重抓；否則只影響這筆所在批次之後。
     await reloadLoadedRange(sortBy.value ? 1 : activePosition.value)
+    void announce('人員資料已更新。')
     await restoreRowFocus(activeEmployee.value.id, activePosition.value, 'edit')
   } catch {
     dialogError.value = '更新失敗，請重試。'
@@ -445,8 +446,8 @@ async function deleteEmployee(id: string): Promise<void> {
   try {
     await getRepository().delete(id, activePosition.value, getCurrentQuery())
     closeDialog()
-    void announce('人員資料已刪除。')
     await reloadLoadedRange(activePosition.value)
+    void announce('人員資料已刪除。')
     await restoreRowFocus(undefined, activePosition.value, 'edit')
   } catch (error) {
     dialogError.value = error instanceof Error ? error.message : '刪除失敗，請重試。'

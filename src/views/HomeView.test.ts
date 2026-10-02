@@ -5,6 +5,26 @@ import { nextTick } from 'vue'
 import { installFakeWindowLayout } from '../test/fakeWindowLayout'
 import HomeView from './HomeView.vue'
 
+// 可暫停 getPage 的閘門，用來模擬排序／搜尋開著時要數秒才重抓完的列表；未設定時直接放行。
+const pageGate = vi.hoisted(() => ({ wait: undefined as Promise<void> | undefined }))
+
+vi.mock('../data/mockEmployeeRepository', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../data/mockEmployeeRepository')>()
+  return {
+    ...actual,
+    createMockEmployeeRepository: (...args: Parameters<typeof actual.createMockEmployeeRepository>) => {
+      const repository = actual.createMockEmployeeRepository(...args)
+      return {
+        ...repository,
+        async getPage(request: Parameters<typeof repository.getPage>[0]) {
+          if (pageGate.wait) await pageGate.wait
+          return repository.getPage(request)
+        },
+      }
+    },
+  }
+})
+
 const LIST_TOP = 400
 const ROW_PITCH = 56
 const VIEWPORT_HEIGHT = 800
@@ -156,6 +176,27 @@ describe('HomeView action feedback', () => {
     expect(statusRegion.text()).toBe('人員資料已刪除。')
     expect(row(wrapper, 2).attributes('data-record-id')).not.toBe(editedId)
     expect(document.activeElement).toBe(row(wrapper, 2).get('[data-action="edit"]').element)
+  })
+
+  it('shows the success message only after a slow list reload finishes', async () => {
+    const wrapper = await mountHomeView()
+    let release!: () => void
+    pageGate.wait = new Promise((resolve) => {
+      release = resolve
+    })
+
+    await row(wrapper, 2).get('[data-action="edit"]').trigger('click')
+    await wrapper.get('dialog form').trigger('submit')
+    await dialogButton(wrapper, '確認更新').trigger('click')
+    await flushPromises()
+
+    // 列表還在重抓：成功提示不能先出現，否則重抓超過提示時間就會在列表更新前消失。
+    expect(wrapper.get('#action-status').text()).not.toContain('人員資料已更新。')
+
+    pageGate.wait = undefined
+    release()
+    await flushPromises()
+    expect(wrapper.get('#action-status').text()).toContain('人員資料已更新。')
   })
 })
 
