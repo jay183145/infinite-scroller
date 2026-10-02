@@ -123,7 +123,39 @@ describe('HomeView virtual list', () => {
     expect(movedRow.text()).toContain('PIN TO #300')
     expect(layout.scrollIntoView).toHaveBeenLastCalledWith({ block: 'center' })
     expect(layout.scrollIntoView.mock.contexts.at(-1)).toBe(movedRow.element)
-    expect(wrapper.get('main p[role="status"]').text()).toBe(`${movedName} 已移至第 300 筆。`)
+    expect(wrapper.get('#action-status').text()).toBe(`${movedName} 已移至第 300 筆。`)
+    // 焦點回到移動後那一列的 PIN 按鈕，鍵盤使用者不會掉回頁首。
+    expect(document.activeElement).toBe(movedRow.get('[data-action="position"]').element)
+  })
+})
+
+describe('HomeView action feedback', () => {
+  function dialogButton(wrapper: VueWrapper, text: string) {
+    return wrapper.findAll('dialog button').find((button) => button.text() === text)!
+  }
+
+  it('announces the result and returns focus to the affected row after edit and delete', async () => {
+    const wrapper = await mountHomeView()
+    const statusRegion = wrapper.get('#action-status')
+    expect(statusRegion.attributes('aria-live')).toBe('polite')
+
+    const editedId = row(wrapper, 2).attributes('data-record-id')
+    await row(wrapper, 2).get('[data-action="edit"]').trigger('click')
+    await wrapper.get('dialog form').trigger('submit')
+    await dialogButton(wrapper, '確認更新').trigger('click')
+    await flushPromises()
+
+    expect(statusRegion.text()).toBe('人員資料已更新。')
+    expect(document.activeElement).toBe(wrapper.get(`tr[data-record-id="${editedId}"] [data-action="edit"]`).element)
+
+    // 刪除後原本那筆不存在，焦點落在遞補到同一列號的資料上。
+    await row(wrapper, 2).get('[data-action="delete"]').trigger('click')
+    await dialogButton(wrapper, '確認刪除').trigger('click')
+    await flushPromises()
+
+    expect(statusRegion.text()).toBe('人員資料已刪除。')
+    expect(row(wrapper, 2).attributes('data-record-id')).not.toBe(editedId)
+    expect(document.activeElement).toBe(row(wrapper, 2).get('[data-action="edit"]').element)
   })
 })
 

@@ -23,6 +23,8 @@ const LOAD_AHEAD_PX = 600
 const RENDER_AHEAD_PX = 600
 // 桌機列高由 CSS 固定為 3.5rem；手機卡片列高於首次渲染後實測。
 const ESTIMATED_ROW_PITCH_PX = 56
+// 操作結果提示顯示的時間。
+const STATUS_TOAST_MS = 5000
 // 回到最上方時平滑捲動的最長距離（畫面高的倍數）；更遠的先瞬間跳到這個距離再捲動。
 const BACK_TO_TOP_GLIDE_VIEWPORTS = 3
 
@@ -45,6 +47,7 @@ const tableBody = ref<HTMLElement | null>(null)
 const summarySection = ref<HTMLElement | null>(null)
 const pageHeader = ref<HTMLElement | null>(null)
 const pageTitle = ref<HTMLElement | null>(null)
+const tableTitle = ref<HTMLElement | null>(null)
 const showBackToTop = ref(false)
 const errorMessage = ref('')
 const dialogOpen = ref(false)
@@ -61,6 +64,7 @@ let latestPageRequestId = 0
 let loadMoreObserver: IntersectionObserver | undefined
 let summaryResizeObserver: ResizeObserver | undefined
 let backToTopObserver: IntersectionObserver | undefined
+let statusTimer: ReturnType<typeof setTimeout> | undefined
 
 function getRepository(size = datasetSize.value): EmployeeRepository {
   let repository = repositories.get(size)
@@ -156,6 +160,11 @@ function sortIndicator(field: EmployeeSortField): string {
 function getPinnedPosition(employee: Employee): number | undefined {
   const position = manualPositions.value.get(employee.id)
   return position === undefined ? undefined : position + 1
+}
+
+function pinLabel(employee: Employee): string {
+  const position = getPinnedPosition(employee)
+  return position === undefined ? 'PIN TO' : `PIN TO #${formatCount(position)}`
 }
 
 function startListRequest(): number {
@@ -312,14 +321,38 @@ function closeDialog(): void {
   dialogError.value = ''
 }
 
+// 提示固定在視窗底部，捲到深處操作也看得到；先清空再寫入，同樣的訊息連續出現時螢幕閱讀器也會再唸一次。
+async function announce(message: string): Promise<void> {
+  if (statusTimer !== undefined) clearTimeout(statusTimer)
+  statusMessage.value = ''
+  await nextTick()
+  statusMessage.value = message
+  statusTimer = setTimeout(() => {
+    statusMessage.value = ''
+    statusTimer = undefined
+  }, STATUS_TOAST_MS)
+}
+
+// 重抓期間列上的按鈕會被停用而失去焦點；完成後把焦點放回同一筆資料，找不到（已刪除或不在已載入範圍）就放到同一列號，再不行才回到列表標題。
+async function restoreRowFocus(recordId: string | undefined, position: number, action: 'edit' | 'position'): Promise<void> {
+  await nextTick()
+  const body = tableBody.value
+  const target =
+    (recordId ? body?.querySelector<HTMLElement>(`tr[data-record-id="${recordId}"] [data-action="${action}"]`) : null) ??
+    body?.querySelector<HTMLElement>(`tr[data-row-position="${position}"] [data-action="${action}"]`) ??
+    tableTitle.value
+  target?.focus()
+}
+
 async function createEmployee(employee: EmployeeDraft): Promise<void> {
   isSaving.value = true
   dialogError.value = ''
   try {
-    await getRepository().create(employee)
+    const created = await getRepository().create(employee)
     closeDialog()
-    statusMessage.value = '人員資料已新增。'
+    void announce('人員資料已新增。')
     await resetList()
+    await restoreRowFocus(created.id, 1, 'edit')
   } catch {
     dialogError.value = '新增失敗，請檢查資料後重試。'
   } finally {
@@ -335,9 +368,10 @@ async function updateEmployee(employee: EmployeeDraft): Promise<void> {
   try {
     await getRepository().update(activeEmployee.value.id, employee)
     closeDialog()
-    statusMessage.value = '人員資料已更新。'
+    void announce('人員資料已更新。')
     // 有排序時，改值可能讓這筆移到更前面，需從第一批重抓；否則只影響這筆所在批次之後。
     await reloadLoadedRange(sortBy.value ? 1 : activePosition.value)
+    await restoreRowFocus(activeEmployee.value.id, activePosition.value, 'edit')
   } catch {
     dialogError.value = '更新失敗，請重試。'
   } finally {
@@ -351,8 +385,9 @@ async function deleteEmployee(id: string): Promise<void> {
   try {
     await getRepository().delete(id, activePosition.value, getCurrentQuery())
     closeDialog()
-    statusMessage.value = '人員資料已刪除。'
+    void announce('人員資料已刪除。')
     await reloadLoadedRange(activePosition.value)
+    await restoreRowFocus(undefined, activePosition.value, 'edit')
   } catch (error) {
     dialogError.value = error instanceof Error ? error.message : '刪除失敗，請重試。'
   } finally {
@@ -370,13 +405,15 @@ async function moveEmployeeToPosition(targetPosition: number): Promise<void> {
     closeDialog()
     await reloadLoadedRange(Math.min(activePosition.value, targetPosition))
 
-    const name = activeEmployee.value.name
+    const { id, name } = activeEmployee.value
     if (targetPosition <= records.value.length) {
-      statusMessage.value = `${name} 已移至第 ${formatCount(targetPosition)} 筆。`
+      void announce(`${name} 已移至第 ${formatCount(targetPosition)} 筆。`)
       await scrollToPosition(targetPosition)
+      await restoreRowFocus(id, targetPosition, 'position')
     } else {
       // 虛擬列表只涵蓋已依序載入的範圍，不為了跳到遠處一次載入大量列；繼續往下捲動即可看到。
-      statusMessage.value = `${name} 已移至第 ${formatCount(targetPosition)} 筆（尚未載入到該位置）。`
+      void announce(`${name} 已移至第 ${formatCount(targetPosition)} 筆（尚未載入到該位置）。`)
+      await restoreRowFocus(undefined, activePosition.value, 'position')
     }
   } catch (error) {
     dialogError.value = error instanceof Error ? error.message : '位置調整失敗，請重新載入資料後再試。'
@@ -430,6 +467,7 @@ onBeforeUnmount(() => {
   loadMoreObserver?.disconnect()
   summaryResizeObserver?.disconnect()
   backToTopObserver?.disconnect()
+  if (statusTimer !== undefined) clearTimeout(statusTimer)
   document.documentElement.style.removeProperty('scroll-padding-top')
 })
 </script>
@@ -448,8 +486,6 @@ onBeforeUnmount(() => {
 
     <!-- 底部留白要大於右下角浮動按鈕的高度，捲到底時「載入更多」才不會被蓋住。 -->
     <main class="mx-auto w-full max-w-370 px-4 pb-24 sm:px-6 lg:px-10">
-      <p v-if="statusMessage" role="status" aria-live="polite" class="mt-4 text-sm text-accent">{{ statusMessage }}</p>
-
       <section ref="summarySection" aria-label="資料摘要" class="summary-grid sticky top-0 z-10 mt-7 grid grid-cols-3 rounded-md border border-l-4 border-line border-l-accent bg-canvas px-4 sm:px-6">
         <div class="summary-group contents">
           <div class="min-w-0 py-4 pr-3 sm:py-5">
@@ -470,7 +506,7 @@ onBeforeUnmount(() => {
       <section aria-labelledby="table-title" class="mt-8">
         <div class="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 id="table-title" class="text-base font-semibold">人員目錄</h2>
+            <h2 id="table-title" ref="tableTitle" tabindex="-1" class="text-base font-semibold outline-none">人員目錄</h2>
             <p v-if="matchingRecords > 0" class="mt-1 text-sm text-muted">已載入 {{ formatCount(loadedCount) }} / {{ formatCount(matchingRecords) }} 筆</p>
             <p v-else class="mt-1 text-sm text-muted">沒有符合的資料</p>
           </div>
@@ -500,7 +536,6 @@ onBeforeUnmount(() => {
             <select
               :value="datasetSize"
               :disabled="isResetting"
-              aria-label="選擇假資料總筆數"
               class="rounded-md border border-line bg-surface px-3 py-2 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
               @change="changeDatasetSize"
             >
@@ -562,6 +597,7 @@ onBeforeUnmount(() => {
                   v-for="{ record, position } in visibleRows"
                   :key="record.id"
                   :data-row-position="position"
+                  :data-record-id="record.id"
                   :aria-rowindex="position + 1"
                   class="transition-colors"
                   :class="getPinnedPosition(record) ? 'bg-accent-soft hover:bg-accent-soft' : 'hover:bg-[#f8fbf9]'"
@@ -581,16 +617,34 @@ onBeforeUnmount(() => {
                   <td data-label="到職日" class="whitespace-nowrap px-3 py-4 font-mono text-xs text-muted lg:truncate">{{ record.dateStart }}</td>
                   <td data-label="操作" class="py-3 pl-3 pr-5 text-right">
                     <div class="flex flex-nowrap items-center justify-end gap-2">
-                      <button class="text-xs font-medium text-accent underline-offset-2 hover:underline disabled:opacity-50" :disabled="isResetting" @click="openDialog('edit', record, position)">編輯</button>
+                      <!-- aria-label 以畫面上的按鈕文字開頭再加姓名，符合 WCAG 2.5.3（Label in Name）。 -->
                       <button
+                        data-action="edit"
+                        class="text-xs font-medium text-accent underline-offset-2 hover:underline disabled:opacity-50"
+                        :aria-label="`編輯 ${record.name}`"
+                        :disabled="isResetting"
+                        @click="openDialog('edit', record, position)"
+                      >
+                        編輯
+                      </button>
+                      <button
+                        data-action="position"
                         :class="getPinnedPosition(record) ? 'rounded-md bg-accent px-2 py-1 text-[0.7rem] font-semibold uppercase text-white shadow-sm hover:bg-[#1d6045]' : 'text-xs font-semibold uppercase text-accent underline-offset-2 hover:underline'"
-                        :aria-label="`PIN TO position for ${record.name}`"
+                        :aria-label="`${pinLabel(record)} ${record.name}`"
                         :disabled="isResetting"
                         @click="openDialog('position', record, position)"
                       >
-                        {{ getPinnedPosition(record) ? `PIN TO #${formatCount(getPinnedPosition(record)!)}` : 'PIN TO' }}
+                        {{ pinLabel(record) }}
                       </button>
-                      <button class="text-xs font-medium text-red-700 underline-offset-2 hover:underline disabled:opacity-50" :disabled="isResetting" @click="openDialog('delete', record, position)">刪除</button>
+                      <button
+                        data-action="delete"
+                        class="text-xs font-medium text-red-700 underline-offset-2 hover:underline disabled:opacity-50"
+                        :aria-label="`刪除 ${record.name}`"
+                        :disabled="isResetting"
+                        @click="openDialog('delete', record, position)"
+                      >
+                        刪除
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -645,6 +699,28 @@ onBeforeUnmount(() => {
       @remove="deleteEmployee"
       @move-position="moveEmployeeToPosition"
     />
+
+    <!-- live region 常駐在 DOM，只替換內容，螢幕閱讀器才能可靠地朗讀；右側留出「回到最上方」按鈕的空間。 -->
+    <div
+      id="action-status"
+      role="status"
+      aria-live="polite"
+      class="pointer-events-none fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-[max(1rem,env(safe-area-inset-left))] right-20 z-20 flex sm:right-auto"
+    >
+      <Transition
+        enter-active-class="transition duration-200 motion-reduce:transition-none"
+        leave-active-class="transition duration-200 motion-reduce:transition-none"
+        enter-from-class="translate-y-2 opacity-0"
+        leave-to-class="translate-y-2 opacity-0"
+      >
+        <p v-if="statusMessage" class="flex max-w-md items-center gap-2 rounded-md bg-ink px-4 py-3 text-sm text-white shadow-lg">
+          <svg aria-hidden="true" viewBox="0 0 24 24" class="size-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 12l5 5L20 7" />
+          </svg>
+          {{ statusMessage }}
+        </p>
+      </Transition>
+    </div>
 
     <Transition
       enter-active-class="transition duration-200 motion-reduce:transition-none"

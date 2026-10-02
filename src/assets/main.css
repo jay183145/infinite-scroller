@@ -6,7 +6,8 @@
   --color-canvas: #f2f6f3;
   --color-surface: #ffffff;
   --color-ink: #1d2923;
-  --color-muted: #6b7770;
+  /* 需在最深的淺色底（置頂列 accent-soft）上仍達 WCAG AA 4.5:1。 */
+  --color-muted: #5f6b64;
   --color-line: #dce5df;
   --color-accent: #247353;
   --color-accent-soft: #e8f3ec;
