@@ -84,6 +84,32 @@ describe('mock employee repository', () => {
     expect(matchesEmployeeSearch(employee, 'nairobi')).toBe(false)
   })
 
+  it('limits the search to the chosen column and matches age exactly', () => {
+    const employee = {
+      id: 'EMP-00000031',
+      dataNumber: 'DATA-00000031',
+      name: 'Alex Morgan',
+      position: 'Product Designer',
+      location: 'Taipei',
+      age: 31,
+      dateStart: '2022-04-18',
+    }
+
+    // 「31」同時出現在資料編號與年齡：指定欄位後只比對該欄。
+    expect(matchesEmployeeSearch(employee, '31', 'dataNumber')).toBe(true)
+    expect(matchesEmployeeSearch(employee, '31', 'name')).toBe(false)
+    expect(matchesEmployeeSearch(employee, 'TAIPEI', 'location')).toBe(true)
+    expect(matchesEmployeeSearch(employee, 'taipei', 'position')).toBe(false)
+    expect(matchesEmployeeSearch(employee, '2022-04', 'dateStart')).toBe(true)
+
+    // 年齡是完全比對，不是部分符合。
+    expect(matchesEmployeeSearch(employee, '31', 'age')).toBe(true)
+    expect(matchesEmployeeSearch(employee, ' 31 ', 'age')).toBe(true)
+    expect(matchesEmployeeSearch(employee, '3', 'age')).toBe(false)
+    expect(matchesEmployeeSearch(employee, '310', 'age')).toBe(false)
+    expect(matchesEmployeeSearch(employee, 'abc', 'age')).toBe(false)
+  })
+
   it('sorts age numerically and uses ID as an ascending stable tie-breaker', () => {
     const younger = {
       id: 'EMP-00000002',

@@ -12,6 +12,7 @@ import {
   type EmployeePage,
   type EmployeeQuery,
   type EmployeeRepository,
+  type EmployeeSearchField,
   type EmployeeSortField,
   type SortDirection,
 } from '../data/employeeRepository'
@@ -32,6 +33,17 @@ const SORT_FIELDS: ReadonlyArray<{ value: EmployeeSortField; label: string }> = 
   { value: 'age', label: '年齡' },
   { value: 'dateStart', label: '到職日' },
 ]
+// 欄位名稱已顯示在選單上，placeholder 只給輸入範例（手機寬度放得下）；年齡是完全比對，其餘欄位為部分符合。
+const SEARCH_PLACEHOLDERS: Record<EmployeeSearchField, string> = {
+  dataNumber: '例如 DATA-00000123',
+  name: '例如 Alex',
+  position: '例如 Engineer',
+  location: '例如 Taipei',
+  age: '完全符合，例如 30',
+  dateStart: '例如 2021-10',
+}
+const ALL_FIELDS_PLACEHOLDER = '輸入關鍵字，例如 Taipei'
+const ALL_FIELDS_LABEL = '搜尋資料編號、姓名、職位、地點、年齡或到職日'
 const BUSY_INDICATOR_DELAY_MS = 250
 // 操作結果提示顯示的時間。
 const STATUS_TOAST_MS = 5000
@@ -47,6 +59,8 @@ const pageTotal = ref(0)
 const matchingRecords = ref(0)
 const searchInput = ref('')
 const activeSearch = ref('')
+// null 表示搜尋全部欄位。
+const searchField = ref<EmployeeSearchField | null>(null)
 const sortBy = ref<EmployeeSortField | null>(null)
 const sortDirection = ref<SortDirection>('asc')
 const isResetting = ref(false)
@@ -121,6 +135,7 @@ function formatCount(value: number): string {
 function getCurrentQuery(): EmployeeQuery {
   return {
     search: activeSearch.value,
+    searchField: searchField.value,
     sortBy: sortBy.value,
     sortDirection: sortDirection.value,
   }
@@ -157,8 +172,26 @@ watch(isResetting, (resetting) => {
   }, BUSY_INDICATOR_DELAY_MS)
 })
 
+const searchPlaceholder = computed(() => (searchField.value ? SEARCH_PLACEHOLDERS[searchField.value] : ALL_FIELDS_PLACEHOLDER))
+const searchLabel = computed(() => {
+  const label = SORT_FIELDS.find((option) => option.value === searchField.value)?.label
+  return label ? `搜尋${label}` : ALL_FIELDS_LABEL
+})
+
 function searchingMessage(): string {
-  return activeSearch.value ? `正在搜尋「${activeSearch.value}」…` : '正在載入全部資料…'
+  if (!activeSearch.value) return '正在載入全部資料…'
+  const label = SORT_FIELDS.find((option) => option.value === searchField.value)?.label ?? ''
+  return `正在搜尋${label}「${activeSearch.value}」…`
+}
+
+// 已有搜尋詞時換欄位要立即重查；沒有搜尋詞只是預先選好欄位。
+function changeSearchField(event: Event): void {
+  const value = (event.currentTarget as HTMLSelectElement).value
+  searchField.value = SORT_FIELDS.find((option) => option.value === value)?.value ?? null
+  if (!activeSearch.value) return
+  cancelSearchDebounce()
+  activeSearch.value = searchInput.value.trim()
+  void resetList(getCurrentQuery(), searchingMessage())
 }
 
 function sortingMessage(): string {
@@ -566,25 +599,38 @@ onBeforeUnmount(() => {
       </section>
 
       <section aria-labelledby="table-title" class="mt-8">
-        <div class="flex flex-wrap items-end justify-between gap-3">
+        <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 id="table-title" ref="tableTitle" tabindex="-1" class="text-base font-semibold outline-none">人員目錄</h2>
-            <p v-if="matchingRecords > 0" class="mt-1 text-sm text-muted">已載入 {{ formatCount(loadedCount) }} / {{ formatCount(matchingRecords) }} 筆</p>
-            <p v-else class="mt-1 text-sm text-muted">沒有符合的資料</p>
+            <p v-if="matchingRecords === 0" class="mt-1 text-sm text-muted">沒有符合的資料</p>
           </div>
           <span class="text-xs font-medium text-muted">每批 {{ PAGE_SIZE }} 筆</span>
         </div>
 
         <form class="my-4 flex flex-col gap-3 sm:flex-row sm:items-center" role="search" @submit.prevent="submitSearch">
-          <label class="sr-only" for="employee-search">搜尋資料編號、姓名、職位、地點、年齡或到職日</label>
-          <input
-            id="employee-search"
-            v-model="searchInput"
-            type="search"
-            autocomplete="off"
-            placeholder="搜尋資料編號、姓名、職位、地點、年齡或到職日"
-            class="min-w-0 flex-1 rounded-md border border-line bg-surface px-3 py-2.5 text-sm outline-none placeholder:text-muted/75 focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
-          >
+          <div class="flex min-w-0 flex-1 gap-2">
+            <label class="sr-only" for="search-field">搜尋欄位</label>
+            <select
+              id="search-field"
+              name="searchField"
+              :value="searchField ?? ''"
+              class="shrink-0 rounded-md border border-line bg-surface px-3 py-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              @change="changeSearchField"
+            >
+              <option value="">全部欄位</option>
+              <option v-for="field in SORT_FIELDS" :key="field.value" :value="field.value">{{ field.label }}</option>
+            </select>
+            <label class="sr-only" for="employee-search">{{ searchLabel }}</label>
+            <input
+              id="employee-search"
+              v-model="searchInput"
+              type="search"
+              autocomplete="off"
+              :inputmode="searchField === 'age' ? 'numeric' : 'search'"
+              :placeholder="searchPlaceholder"
+              class="min-w-0 flex-1 rounded-md border border-line bg-surface px-3 py-2.5 text-sm outline-none placeholder:text-muted/75 focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
+            >
+          </div>
           <div class="flex gap-2">
             <button type="submit" class="rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#1d6045]">搜尋</button>
             <button v-if="activeSearch" type="button" class="rounded-md border border-line px-4 py-2.5 text-sm font-medium hover:bg-canvas" @click="clearSearch">清除</button>

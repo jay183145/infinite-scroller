@@ -164,6 +164,7 @@ export function createMockEmployeeRepository(
           revision,
           query: {
             search: request.search,
+            searchField: request.searchField,
             sortBy: request.sortBy,
             sortDirection: request.sortDirection,
           },

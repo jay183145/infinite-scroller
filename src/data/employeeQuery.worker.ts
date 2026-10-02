@@ -5,6 +5,7 @@ import {
   compareEmployees,
   createEmployeeSearchMatcher,
   EMPLOYEE_QUERY_CACHE_TTL_MS,
+  employeeQueryCacheKey,
 } from './employeeQuery'
 import type {
   EmployeeQueryWorkerMessage,
@@ -70,7 +71,7 @@ function buildQueryCache(request: EmployeeQueryWorkerRequest): QueryCache {
   const pinPositionById = new Map(request.manualPositions.map(({ id, position }) => [id, position]))
   const candidateTokens = new Uint32Array(request.recordCount + request.created.length)
   const matchingPins: MatchedPin[] = []
-  const matchesSearch = createEmployeeSearchMatcher(request.query.search ?? '')
+  const matchesSearch = createEmployeeSearchMatcher(request.query.search ?? '', request.query.searchField ?? null)
   const { sortBy, sortDirection = 'asc' } = request.query
   // 排序鍵在同一次全量掃描中順便算好，不再於每次比較時重建資料；超出快速排序上限時退回比較器排序。
   const sorter = sortBy && candidateTokens.length <= MAX_FAST_SORT_CANDIDATES
@@ -113,16 +114,8 @@ function buildQueryCache(request: EmployeeQueryWorkerRequest): QueryCache {
 
   // 快取只保留一份 Uint32 索引，不在主執行緒建立完整 Employee 陣列；10M 筆約占 40MB。
   // 排序時另需一份 Float64 排序鍵（10M 筆約 80MB），排完即可回收。
-  const key = JSON.stringify([
-    request.recordCount,
-    request.revision,
-    request.query.search?.trim().toLocaleLowerCase('en-US') ?? '',
-    request.query.sortBy ?? null,
-    request.query.sortDirection ?? 'asc',
-  ])
-
   return {
-    key,
+    key: employeeQueryCacheKey(request.recordCount, request.revision, request.query),
     expiresAt: Date.now() + EMPLOYEE_QUERY_CACHE_TTL_MS,
     sortedTokens,
     matchingCount,
@@ -188,13 +181,7 @@ workerScope.onmessage = (event) => {
   }
 
   try {
-    const key = JSON.stringify([
-      message.recordCount,
-      message.revision,
-      message.query.search?.trim().toLocaleLowerCase('en-US') ?? '',
-      message.query.sortBy ?? null,
-      message.query.sortDirection ?? 'asc',
-    ])
+    const key = employeeQueryCacheKey(message.recordCount, message.revision, message.query)
     // 容量維持單筆以限制 Worker 的索引記憶體，快取固定 30 秒且資料 revision/查詢條件必須一致；到期後會重新全量掃描。
     if (!canReuseEmployeeQueryCache(cache, key, Date.now())) cache = buildQueryCache(message)
     const activeCache = cache

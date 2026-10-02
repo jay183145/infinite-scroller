@@ -11,10 +11,13 @@ export const DATASET_SIZE_OPTIONS = [
 ] as const
 
 export type EmployeeSortField = 'dataNumber' | 'name' | 'position' | 'location' | 'age' | 'dateStart'
+export type EmployeeSearchField = EmployeeSortField
 export type SortDirection = 'asc' | 'desc'
 
 export interface EmployeeQuery {
   search?: string
+  // null 或未指定時搜尋全部欄位。
+  searchField?: EmployeeSearchField | null
   sortBy?: EmployeeSortField | null
   sortDirection?: SortDirection
 }
