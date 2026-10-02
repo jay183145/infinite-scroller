@@ -144,6 +144,17 @@ export function createMockEmployeeRepository(
     })()
   }
 
+  // 基礎資料的資料編號就是索引 + 1：沒有新增資料、也沒改過資料編號時，資料編號排序就是索引順序，
+  // 可直接依索引分頁，不必交給 Worker 全量排序（預設排序即為資料編號，首屏才能維持即時）。
+  function dataNumberFollowsIndex(): boolean {
+    if (created.size > 0) return false
+    for (const employee of updated.values()) {
+      const index = getBaseIndex(employee.id)
+      if (index === undefined || employee.dataNumber !== createEmployee(index).dataNumber) return false
+    }
+    return true
+  }
+
   function getExcludedBaseIndexes(): number[] {
     return [...new Set([
       ...[...deleted, ...manualPositions.keys()]
@@ -155,7 +166,8 @@ export function createMockEmployeeRepository(
   return {
     async getPage(request: EmployeePageRequest): Promise<EmployeePage> {
       const total = recordCount - deleted.size + created.size
-      if (request.search?.trim() || request.sortBy) {
+      const followsIndex = !request.sortBy || (request.sortBy === 'dataNumber' && dataNumberFollowsIndex())
+      if (request.search?.trim() || !followsIndex) {
         return runEmployeeQuery({
           recordCount,
           total,
@@ -184,6 +196,9 @@ export function createMockEmployeeRepository(
       const manualByPosition = new Map(manualEntries.map(({ position, id }) => [position, id]))
       const newRecords = [...created.values()].filter((employee) => !manualIds.has(employee.id))
       const excludedBase = getExcludedBaseIndexes()
+      // 資料編號反序：未被刪除或 PIN 的基礎資料依索引倒著取。
+      const descending = request.sortBy === 'dataNumber' && request.sortDirection === 'desc'
+      const unplacedBaseCount = recordCount - excludedBase.length
       const pageTotal = total
       const offset = Math.min(total, Math.max(0, Math.floor(request.offset)))
       const limit = Math.min(PAGE_SIZE, Math.max(0, Math.floor(request.limit)))
@@ -216,7 +231,7 @@ export function createMockEmployeeRepository(
         }
 
         const baseRank = unplacedRank - newRecords.length
-        const baseIndex = findBaseIndexByRank(baseRank, excludedBase, recordCount)
+        const baseIndex = findBaseIndexByRank(descending ? unplacedBaseCount - 1 - baseRank : baseRank, excludedBase, recordCount)
         const id = `EMP-${String(baseIndex + 1).padStart(8, '0')}`
         const employee = updated.get(id) ?? createEmployee(baseIndex)
         pageRecords.push(employee)

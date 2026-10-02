@@ -59,9 +59,10 @@ const pageTotal = ref(0)
 const matchingRecords = ref(0)
 const searchInput = ref('')
 const activeSearch = ref('')
-// null 表示搜尋全部欄位。
-const searchField = ref<EmployeeSearchField | null>(null)
-const sortBy = ref<EmployeeSortField | null>(null)
+// 預設依資料編號搜尋；null 表示搜尋全部欄位。
+const searchField = ref<EmployeeSearchField | null>('dataNumber')
+// 一律有排序欄位，預設資料編號正序；未新增或改過資料編號時，repository 會直接依索引分頁，不需全量排序。
+const sortBy = ref<EmployeeSortField>('dataNumber')
 const sortDirection = ref<SortDirection>('asc')
 const isResetting = ref(false)
 // 重新查詢期間顯示的說明；排序千萬筆需要數秒，要讓使用者知道正在做什麼。
@@ -195,8 +196,7 @@ function changeSearchField(event: Event): void {
 }
 
 function sortingMessage(): string {
-  const label = SORT_FIELDS.find((option) => option.value === sortBy.value)?.label
-  if (!label) return '正在恢復預設順序…'
+  const label = SORT_FIELDS.find((option) => option.value === sortBy.value)?.label ?? ''
   return `正在依${label}${sortDirection.value === 'asc' ? '正序' : '反序'}排序 ${formatCount(matchingRecords.value)} 筆資料…`
 }
 
@@ -226,14 +226,14 @@ function sortRecords(field: EmployeeSortField): void {
 // 卡片版面（< 1024px）沒有表頭，改用下拉選單選欄位、按鈕切換正反序。
 function changeSortField(event: Event): void {
   const value = (event.currentTarget as HTMLSelectElement).value
-  const field = SORT_FIELDS.find((option) => option.value === value)?.value ?? null
+  const field = SORT_FIELDS.find((option) => option.value === value)?.value
+  if (!field) return
   sortBy.value = field
   sortDirection.value = 'asc'
   void resetList(getCurrentQuery(), sortingMessage())
 }
 
 function toggleSortDirection(): void {
-  if (!sortBy.value) return
   sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
   void resetList(getCurrentQuery(), sortingMessage())
 }
@@ -460,10 +460,11 @@ async function updateEmployee(employee: EmployeeDraft): Promise<void> {
   isSaving.value = true
   dialogError.value = ''
   try {
+    // 改到目前排序的欄位時，這筆可能移到更前面，需從第一批重抓；否則只影響這筆所在批次之後。
+    const sortValueChanged = String(activeEmployee.value[sortBy.value]) !== String(employee[sortBy.value])
     await getRepository().update(activeEmployee.value.id, employee)
     closeDialog()
-    // 有排序時，改值可能讓這筆移到更前面，需從第一批重抓；否則只影響這筆所在批次之後。
-    await reloadLoadedRange(sortBy.value ? 1 : activePosition.value)
+    await reloadLoadedRange(sortValueChanged ? 1 : activePosition.value)
     void announce('人員資料已更新。')
     await restoreRowFocus(activeEmployee.value.id, activePosition.value, 'edit')
   } catch {
@@ -621,14 +622,15 @@ onBeforeUnmount(() => {
           <span class="text-xs font-medium text-muted">模擬資料 · 每批 {{ PAGE_SIZE }} 筆</span>
         </div>
 
-        <form class="my-3 flex items-center gap-2 sm:my-4 sm:gap-3" role="search" @submit.prevent="submitSearch">
-          <div class="flex min-w-0 flex-1 gap-2">
+        <form class="mt-3 flex items-stretch gap-2 sm:mt-4 sm:gap-3" role="search" @submit.prevent="submitSearch">
+          <!-- 欄位選單與關鍵字共用一個外框：一眼看出是「在哪個欄位搜尋什麼」；焦點框畫在整組外框上。 -->
+          <div class="flex min-w-0 flex-1 rounded-md border border-line bg-surface focus-within:ring-2 focus-within:ring-accent">
             <label class="sr-only" for="search-field">搜尋欄位</label>
             <select
               id="search-field"
               name="searchField"
               :value="searchField ?? ''"
-              class="min-w-[calc(5em+2rem)] shrink-0 rounded-md border border-line bg-surface px-3 py-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              class="min-w-[calc(5em+2rem)] shrink-0 rounded-l-md border-0 border-r border-line bg-canvas px-3 py-2.5 text-sm outline-none"
               @change="changeSearchField"
             >
               <option value="">全部欄位</option>
@@ -642,7 +644,7 @@ onBeforeUnmount(() => {
               autocomplete="off"
               :inputmode="searchField === 'age' ? 'numeric' : 'search'"
               :placeholder="searchPlaceholder"
-              class="min-w-0 flex-1 rounded-md border border-line bg-surface px-3 py-2.5 text-sm outline-none placeholder:text-muted/75 focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
+              class="min-w-0 flex-1 rounded-r-md border-0 bg-transparent px-3 py-2.5 text-sm outline-none placeholder:text-muted/75 disabled:opacity-60"
             >
           </div>
           <div class="flex gap-2">
@@ -663,7 +665,7 @@ onBeforeUnmount(() => {
           </div>
         </form>
 
-        <div class="my-3 flex flex-wrap items-center justify-between gap-2 sm:my-4 sm:gap-3">
+        <div class="mb-4 mt-2 flex flex-wrap items-center justify-between gap-2 sm:my-4 sm:gap-3">
           <!-- 手機寬度改由上方「總資料量」選擇資料規模。 -->
           <label class="flex items-center gap-3 text-sm font-medium text-ink max-sm:hidden">
             資料規模
@@ -680,29 +682,27 @@ onBeforeUnmount(() => {
               </option>
             </select>
           </label>
-          <div class="flex items-center gap-2 lg:hidden">
-            <label class="flex items-center gap-3 text-sm font-medium text-ink">
-              <span class="max-sm:sr-only">排序</span>
-              <select
-                id="sort-field"
-                name="sortField"
-                :value="sortBy ?? ''"
-                :disabled="isResetting"
-                class="min-w-[calc(5em+2rem)] rounded-md border border-line bg-surface px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
-                @change="changeSortField"
-              >
-                <option value="">預設順序</option>
-                <option v-for="field in SORT_FIELDS" :key="field.value" :value="field.value">{{ field.label }}</option>
-              </select>
-            </label>
+          <!-- 卡片版面（< 1024px）沒有表頭：「排序｜欄位｜方向」組成一組，標籤放在框內。 -->
+          <div class="flex w-full rounded-md border border-line bg-surface focus-within:ring-2 focus-within:ring-accent sm:w-auto lg:hidden">
+            <label for="sort-field" class="flex shrink-0 items-center rounded-l-md border-r border-line bg-canvas px-3 text-sm font-medium text-ink">排序</label>
+            <select
+              id="sort-field"
+              name="sortField"
+              :value="sortBy"
+              :disabled="isResetting"
+              class="min-w-[calc(5em+2rem)] flex-1 rounded-none border-0 bg-transparent px-3 py-2.5 text-sm outline-none disabled:opacity-60 sm:py-1.5"
+              @change="changeSortField"
+            >
+              <option v-for="field in SORT_FIELDS" :key="field.value" :value="field.value">{{ field.label }}</option>
+            </select>
             <button
               type="button"
-              class="flex items-center gap-1.5 rounded-md border border-line bg-surface px-3 py-2 text-sm font-medium hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50"
-              :disabled="!sortBy || isResetting"
+              class="flex shrink-0 items-center gap-1.5 rounded-r-md border-l border-line px-3 py-2.5 text-sm font-medium text-accent sm:py-1.5 outline-none hover:bg-accent-soft disabled:opacity-50"
+              :disabled="isResetting"
               @click="toggleSortDirection"
             >
               {{ sortDirection === 'asc' ? '正序' : '反序' }}
-              <LoadingSpinner v-if="showBusy && sortBy" class="size-3.5 text-accent" />
+              <LoadingSpinner v-if="showBusy" class="size-3.5" />
               <span v-else aria-hidden="true">{{ sortDirection === 'asc' ? '↑' : '↓' }}</span>
             </button>
           </div>

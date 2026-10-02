@@ -200,6 +200,28 @@ describe('HomeView action feedback', () => {
   })
 })
 
+describe('HomeView search', () => {
+  it('searches by data number by default', async () => {
+    const wrapper = await mountHomeView()
+
+    expect((wrapper.get('#search-field').element as HTMLSelectElement).value).toBe('dataNumber')
+    expect(wrapper.get('#employee-search').attributes('placeholder')).toBe('例如 DATA-00000123')
+    expect(wrapper.get('label[for="employee-search"]').text()).toBe('搜尋資料編號')
+  })
+})
+
+describe('HomeView default sort', () => {
+  it('sorts by data number ascending by default without waiting for a full sort', async () => {
+    const wrapper = await mountHomeView()
+
+    expect(wrapper.findAll('thead th')[0]!.attributes('aria-sort')).toBe('ascending')
+    expect((wrapper.get('#sort-field').element as HTMLSelectElement).value).toBe('dataNumber')
+    // 測試環境沒有 Worker：首批能直接渲染，表示預設排序走的是索引分頁。
+    expect(row(wrapper, 1).text()).toContain('DATA-00000001')
+    expect(row(wrapper, 2).text()).toContain('DATA-00000002')
+  })
+})
+
 describe('HomeView sorting feedback', () => {
   // 排序交給 Worker；讓 Worker 永不回應，模擬千萬筆排序仍在進行中。
   class PendingWorker {

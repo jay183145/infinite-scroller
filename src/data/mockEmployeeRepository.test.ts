@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DATASET_SIZE_OPTIONS, DEFAULT_DATASET_SIZE, PAGE_SIZE } from './employeeRepository'
 import {
   canReuseEmployeeQueryCache,
@@ -29,6 +29,57 @@ describe('mock employee repository', () => {
     }
 
     expect(DEFAULT_DATASET_SIZE).toBe(10_000_000)
+  })
+
+  describe('data-number sort without the worker', () => {
+    // 測試環境沒有 Worker：走到 Worker 的查詢會直接失敗，因此能通過就代表是依索引分頁。
+    const dataNumbers = (page: { records: Array<{ dataNumber: string }> }) => page.records.map(({ dataNumber }) => dataNumber)
+    const ascending = { sortBy: 'dataNumber' as const, sortDirection: 'asc' as const }
+    const descending = { sortBy: 'dataNumber' as const, sortDirection: 'desc' as const }
+
+    afterEach(() => {
+      vi.unstubAllGlobals()
+    })
+
+    it('serves ascending order straight from the index, identical to the default order', async () => {
+      const repository = createMockEmployeeRepository(1_000)
+
+      expect(await repository.getPage({ offset: 0, limit: 5, ...ascending })).toEqual(await repository.getPage({ offset: 0, limit: 5 }))
+      expect(dataNumbers(await repository.getPage({ offset: 995, limit: 5, ...ascending }))).toEqual(
+        ['DATA-00000996', 'DATA-00000997', 'DATA-00000998', 'DATA-00000999', 'DATA-00001000'],
+      )
+    })
+
+    it('serves descending order by walking the index backwards around deletions and PINs', async () => {
+      const repository = createMockEmployeeRepository(1_000)
+      expect(dataNumbers(await repository.getPage({ offset: 0, limit: 3, ...descending }))).toEqual(['DATA-00001000', 'DATA-00000999', 'DATA-00000998'])
+      expect(dataNumbers(await repository.getPage({ offset: 997, limit: 3, ...descending }))).toEqual(['DATA-00000003', 'DATA-00000002', 'DATA-00000001'])
+
+      // 刪除最後一筆、再把 DATA-00000500 PIN 到第 1 筆：其餘仍依資料編號反序遞補。
+      await repository.delete('EMP-00001000', 1, descending)
+      await repository.moveToPosition('EMP-00000500', 500, 1, descending)
+      const page = await repository.getPage({ offset: 0, limit: 3, ...descending })
+      expect(dataNumbers(page)).toEqual(['DATA-00000500', 'DATA-00000999', 'DATA-00000998'])
+      expect(page.total).toBe(999)
+      expect(dataNumbers(await repository.getPage({ offset: 996, limit: 3, ...descending }))).toEqual(['DATA-00000003', 'DATA-00000002', 'DATA-00000001'])
+    })
+
+    it('falls back to the worker once a data number no longer follows the index', async () => {
+      const posted: unknown[] = []
+      vi.stubGlobal('Worker', class {
+        addEventListener(): void {}
+        postMessage(message: unknown): void { posted.push(message) }
+        terminate(): void {}
+      })
+      const repository = createMockEmployeeRepository(1_000)
+
+      // 改過資料編號：順序不再等於索引，必須交給 Worker 全量排序。
+      const original = (await repository.getPage({ offset: 0, limit: 1 })).records[0]!
+      await repository.update(original.id, { ...original, dataNumber: 'ZZZ-1' })
+      // 假 Worker 不會回應；這筆查詢之後會被下一個查詢取消（AbortError），在此吞掉。
+      repository.getPage({ offset: 0, limit: 5, ...ascending }).catch(() => {})
+      expect(posted).toHaveLength(1)
+    })
   })
 
   it('returns deterministic records for the same offset', async () => {
