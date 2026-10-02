@@ -41,6 +41,9 @@ const loadMoreError = ref('')
 const loadMoreSentinel = ref<HTMLElement | null>(null)
 const tableBody = ref<HTMLElement | null>(null)
 const summarySection = ref<HTMLElement | null>(null)
+const pageHeader = ref<HTMLElement | null>(null)
+const pageTitle = ref<HTMLElement | null>(null)
+const showBackToTop = ref(false)
 const errorMessage = ref('')
 const dialogOpen = ref(false)
 const dialogMode = ref<'create' | 'edit' | 'delete' | 'position'>('create')
@@ -55,6 +58,7 @@ let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined
 let latestPageRequestId = 0
 let loadMoreObserver: IntersectionObserver | undefined
 let summaryResizeObserver: ResizeObserver | undefined
+let backToTopObserver: IntersectionObserver | undefined
 
 function getRepository(size = datasetSize.value): EmployeeRepository {
   let repository = repositories.get(size)
@@ -379,6 +383,13 @@ async function moveEmployeeToPosition(targetPosition: number): Promise<void> {
   }
 }
 
+function scrollToTop(): void {
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' })
+  // 回到頂端後按鈕會隱藏；把焦點移到頁面標題，鍵盤使用者才不會失去焦點位置。
+  pageTitle.value?.focus({ preventScroll: true })
+}
+
 onMounted(() => {
   loadMoreObserver = new IntersectionObserver(
     (entries) => {
@@ -400,6 +411,12 @@ onMounted(() => {
     document.documentElement.style.scrollPaddingTop = `${section.offsetHeight - hiddenHeight}px`
   })
   if (summarySection.value) summaryResizeObserver.observe(summarySection.value)
+
+  // 頁首捲出視窗後才顯示「回到最上方」；用 IntersectionObserver 判斷，不必另外監聽 scroll。
+  backToTopObserver = new IntersectionObserver((entries) => {
+    showBackToTop.value = !entries.some((entry) => entry.isIntersecting)
+  })
+  if (pageHeader.value) backToTopObserver.observe(pageHeader.value)
   void resetList()
 })
 
@@ -407,23 +424,25 @@ onBeforeUnmount(() => {
   cancelSearchDebounce()
   loadMoreObserver?.disconnect()
   summaryResizeObserver?.disconnect()
+  backToTopObserver?.disconnect()
   document.documentElement.style.removeProperty('scroll-padding-top')
 })
 </script>
 
 <template>
   <div class="min-h-screen bg-surface text-ink">
-    <header class="border-b border-line bg-accent-soft">
+    <header ref="pageHeader" class="border-b border-line bg-accent-soft">
       <section aria-labelledby="page-title" class="mx-auto flex w-full max-w-370 flex-wrap items-end justify-between gap-4 px-4 py-8 sm:px-6 sm:py-10 lg:px-10">
         <div>
           <p class="text-xs font-semibold uppercase tracking-[0.12em] text-accent">DIRECTORY / PEOPLE</p>
-          <h1 id="page-title" class="mt-2 text-[1.75rem] font-semibold leading-tight sm:text-[2rem]">人員資料</h1>
+          <h1 id="page-title" ref="pageTitle" tabindex="-1" class="mt-2 outline-none text-[1.75rem] font-semibold leading-tight sm:text-[2rem]">人員資料</h1>
         </div>
         <button class="shrink-0 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-[#1d6045] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" @click="openDialog('create')">新增人員</button>
       </section>
     </header>
 
-    <main class="mx-auto w-full max-w-370 px-4 pb-12 sm:px-6 lg:px-10">
+    <!-- 底部留白要大於右下角浮動按鈕的高度，捲到底時「載入更多」才不會被蓋住。 -->
+    <main class="mx-auto w-full max-w-370 px-4 pb-24 sm:px-6 lg:px-10">
       <p v-if="statusMessage" role="status" aria-live="polite" class="mt-4 text-sm text-accent">{{ statusMessage }}</p>
 
       <section ref="summarySection" aria-label="資料摘要" class="summary-grid sticky top-0 z-10 mt-7 grid grid-cols-3 rounded-md border border-l-4 border-line border-l-accent bg-canvas px-4 sm:px-6">
@@ -621,5 +640,25 @@ onBeforeUnmount(() => {
       @remove="deleteEmployee"
       @move-position="moveEmployeeToPosition"
     />
+
+    <Transition
+      enter-active-class="transition duration-200 motion-reduce:transition-none"
+      leave-active-class="transition duration-200 motion-reduce:transition-none"
+      enter-from-class="translate-y-2 opacity-0"
+      leave-to-class="translate-y-2 opacity-0"
+    >
+      <button
+        v-show="showBackToTop"
+        type="button"
+        aria-label="回到最上方"
+        title="回到最上方"
+        class="fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-[max(1.25rem,env(safe-area-inset-right))] z-20 grid size-11 place-items-center rounded-full bg-accent text-white shadow-lg hover:bg-[#1d6045] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        @click="scrollToTop"
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 19V5M5 12l7-7 7 7" />
+        </svg>
+      </button>
+    </Transition>
   </div>
 </template>

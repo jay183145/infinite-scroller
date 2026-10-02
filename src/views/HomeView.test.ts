@@ -12,12 +12,20 @@ const VIEWPORT_HEIGHT = 800
 let layout: ReturnType<typeof installFakeWindowLayout>
 let intersectionCallbacks: IntersectionObserverCallback[]
 
+let observedTargets: Map<Element, IntersectionObserverCallback>
+
 class FakeIntersectionObserver {
-  constructor(callback: IntersectionObserverCallback) {
+  constructor(private callback: IntersectionObserverCallback) {
     intersectionCallbacks.push(callback)
   }
-  observe(): void {}
+  observe(target: Element): void {
+    observedTargets.set(target, this.callback)
+  }
   disconnect(): void {}
+}
+
+function setIntersecting(target: Element, isIntersecting: boolean): void {
+  observedTargets.get(target)!([{ isIntersecting } as IntersectionObserverEntry], {} as IntersectionObserver)
 }
 
 function renderedPositions(wrapper: VueWrapper): number[] {
@@ -44,6 +52,7 @@ async function mountHomeView(): Promise<VueWrapper> {
 
 beforeEach(() => {
   intersectionCallbacks = []
+  observedTargets = new Map()
   vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
   layout = installFakeWindowLayout({ listTop: LIST_TOP, rowPitch: ROW_PITCH, viewportHeight: VIEWPORT_HEIGHT, listSelector: 'tbody' })
 })
@@ -115,5 +124,25 @@ describe('HomeView virtual list', () => {
     expect(layout.scrollIntoView).toHaveBeenLastCalledWith({ block: 'center' })
     expect(layout.scrollIntoView.mock.contexts.at(-1)).toBe(movedRow.element)
     expect(wrapper.get('main p[role="status"]').text()).toBe(`${movedName} 已移至第 300 筆。`)
+  })
+})
+
+describe('HomeView back to top', () => {
+  it('appears once the page header leaves the viewport and returns focus to the page title', async () => {
+    const wrapper = await mountHomeView()
+    const button = wrapper.get('button[aria-label="回到最上方"]')
+    expect(button.isVisible()).toBe(false)
+
+    setIntersecting(wrapper.get('header').element, false)
+    await nextTick()
+    expect(button.isVisible()).toBe(true)
+
+    await button.trigger('click')
+    expect(layout.scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: 'smooth' })
+    expect(document.activeElement).toBe(wrapper.get('h1').element)
+
+    setIntersecting(wrapper.get('header').element, true)
+    await nextTick()
+    expect(button.isVisible()).toBe(false)
   })
 })
