@@ -40,6 +40,7 @@ const isLoadingMore = ref(false)
 const loadMoreError = ref('')
 const loadMoreSentinel = ref<HTMLElement | null>(null)
 const tableBody = ref<HTMLElement | null>(null)
+const summarySection = ref<HTMLElement | null>(null)
 const errorMessage = ref('')
 const dialogOpen = ref(false)
 const dialogMode = ref<'create' | 'edit' | 'delete' | 'position'>('create')
@@ -53,6 +54,7 @@ const repositories = new Map<number, EmployeeRepository>()
 let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined
 let latestPageRequestId = 0
 let loadMoreObserver: IntersectionObserver | undefined
+let summaryResizeObserver: ResizeObserver | undefined
 
 function getRepository(size = datasetSize.value): EmployeeRepository {
   let repository = repositories.get(size)
@@ -385,12 +387,21 @@ onMounted(() => {
     { rootMargin: `0px 0px ${LOAD_AHEAD_PX}px 0px` },
   )
   if (loadMoreSentinel.value) loadMoreObserver.observe(loadMoreSentinel.value)
+
+  // 摘要固定在頂端會蓋住捲到上緣的列；以實際高度設定 scroll-padding，讓鍵盤焦點與 scrollIntoView 不被遮住。
+  summaryResizeObserver = new ResizeObserver(() => {
+    const height = summarySection.value?.offsetHeight ?? 0
+    document.documentElement.style.scrollPaddingTop = `${height}px`
+  })
+  if (summarySection.value) summaryResizeObserver.observe(summarySection.value)
   void resetList()
 })
 
 onBeforeUnmount(() => {
   cancelSearchDebounce()
   loadMoreObserver?.disconnect()
+  summaryResizeObserver?.disconnect()
+  document.documentElement.style.removeProperty('scroll-padding-top')
 })
 </script>
 
@@ -420,7 +431,7 @@ onBeforeUnmount(() => {
 
       <p v-if="statusMessage" role="status" aria-live="polite" class="mt-4 text-sm text-accent">{{ statusMessage }}</p>
 
-      <section aria-label="資料摘要" class="summary-grid mt-7 grid grid-cols-3 border-y border-line">
+      <section ref="summarySection" aria-label="資料摘要" class="summary-grid sticky top-0 z-10 mt-7 grid grid-cols-3 border-y border-line bg-canvas">
         <div class="min-w-0 py-4 pr-3 sm:py-5">
           <p class="text-xs text-muted sm:text-sm">總資料量</p>
           <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums sm:text-[1.75rem]">{{ formatCount(totalRecords) }}</p>
