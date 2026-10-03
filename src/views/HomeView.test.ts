@@ -327,6 +327,57 @@ describe('HomeView search', () => {
     expect(wrapper.get('.summary-grid').text()).not.toContain('符合條件')
     expect(wrapper.get('form[role="search"] + p[aria-live]').text()).toBe('')
   })
+
+  // 搜尋會交給 Worker；測試只確認有沒有送出查詢，用不回應的 Worker 讓查詢停在進行中。
+  class PendingWorker {
+    addEventListener(): void {}
+    postMessage(): void {}
+    terminate(): void {}
+  }
+
+  async function waitForDebounce(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    await flushPromises()
+  }
+
+  it('waits for at least two characters before searching while typing', async () => {
+    vi.stubGlobal('Worker', PendingWorker)
+    const wrapper = await mountHomeView()
+    pageRequests.length = 0
+
+    await wrapper.get('#employee-search').setValue('1')
+    await waitForDebounce()
+    expect(pageRequests).toEqual([])
+    expect(wrapper.get('form[role="search"] + p[aria-live]').text()).toBe('輸入至少 2 個字元會自動搜尋，或按 Enter 直接搜尋。')
+
+    await wrapper.get('#employee-search').setValue('12')
+    await waitForDebounce()
+    expect(pageRequests).toEqual([{ offset: 0, limit: 500 }])
+  })
+
+  it('still searches a single character when submitted with Enter', async () => {
+    vi.stubGlobal('Worker', PendingWorker)
+    const wrapper = await mountHomeView()
+    pageRequests.length = 0
+
+    await wrapper.get('#employee-search').setValue('1')
+    await wrapper.get('form[role="search"]').trigger('submit')
+    await flushPromises()
+
+    expect(pageRequests).toEqual([{ offset: 0, limit: 500 }])
+  })
+
+  it('searches a single-digit age while typing because age is an exact match', async () => {
+    vi.stubGlobal('Worker', PendingWorker)
+    const wrapper = await mountHomeView()
+    await wrapper.get('#search-field').setValue('age')
+    pageRequests.length = 0
+
+    await wrapper.get('#employee-search').setValue('5')
+    await waitForDebounce()
+
+    expect(pageRequests).toEqual([{ offset: 0, limit: 500 }])
+  })
 })
 
 describe('HomeView default sort', () => {

@@ -20,6 +20,8 @@ import {
 import type { Employee } from '../types/employee'
 
 const SEARCH_DEBOUNCE_MS = 300
+// 打字自動搜尋的最少字數：只打 1 個字元幾乎每筆都符合，等於排序全部資料；按 Enter 仍可直接搜尋。年齡是完全比對，不受限制。
+const MIN_AUTO_SEARCH_LENGTH = 2
 // 底部 sentinel 進入視窗下方 600px 內就先載入下一批，避免捲到底才看到空白。
 const LOAD_AHEAD_PX = 600
 // 虛擬列表在視窗上下各多渲染 600px 的列，快速捲動時不會先看到空白。
@@ -154,10 +156,14 @@ function cancelSearchDebounce(): void {
   searchDebounceTimer = undefined
 }
 
+function isTooShortForAutoSearch(search: string): boolean {
+  return search !== '' && search.length < MIN_AUTO_SEARCH_LENGTH && searchField.value !== 'age'
+}
+
 watch(searchInput, (value) => {
   cancelSearchDebounce()
   const normalizedSearch = value.trim()
-  if (normalizedSearch === activeSearch.value) return
+  if (normalizedSearch === activeSearch.value || isTooShortForAutoSearch(normalizedSearch)) return
 
   // 停止輸入 300ms 才觸發一次全域 Worker 查詢，避免每個字元都掃描全資料；不會取消已送出的查詢或快取結果。
   searchDebounceTimer = setTimeout(() => {
@@ -187,6 +193,11 @@ const searchLabel = computed(() => {
 })
 // 只在有搜尋條件且查詢完成時顯示，避免查詢中顯示上一次的筆數。
 const showSearchResult = computed(() => activeSearch.value !== '' && !isResetting.value)
+// 字數不足、尚未自動搜尋時提示使用者，避免以為搜尋沒有反應。
+const showShortSearchHint = computed(() => {
+  const normalizedSearch = searchInput.value.trim()
+  return normalizedSearch !== activeSearch.value && isTooShortForAutoSearch(normalizedSearch)
+})
 const searchResultScope = computed(() => SORT_FIELDS.find((option) => option.value === searchField.value)?.label ?? '全部欄位')
 
 function searchingMessage(): string {
@@ -196,10 +207,12 @@ function searchingMessage(): string {
 }
 
 // 已有搜尋詞時換欄位要立即重查；沒有搜尋詞只是預先選好欄位。
+// 字數不足而未自動搜尋的輸入，換到不受字數限制的欄位（年齡）時一併搜尋。
 function changeSearchField(event: Event): void {
   const value = (event.currentTarget as HTMLSelectElement).value
   searchField.value = SORT_FIELDS.find((option) => option.value === value)?.value ?? null
-  if (!activeSearch.value) return
+  const normalizedSearch = searchInput.value.trim()
+  if (!activeSearch.value && (normalizedSearch === '' || isTooShortForAutoSearch(normalizedSearch))) return
   cancelSearchDebounce()
   activeSearch.value = searchInput.value.trim()
   void resetList(getCurrentQuery(), searchingMessage())
@@ -734,8 +747,11 @@ onBeforeUnmount(() => {
         </form>
 
         <!-- 符合筆數只在搜尋後出現；live region 常駐，結果更新時螢幕閱讀器會朗讀。 -->
-        <p aria-live="polite" class="text-sm text-muted" :class="showSearchResult ? 'mt-2' : ''">
-          <template v-if="showSearchResult">
+        <p aria-live="polite" class="text-sm text-muted" :class="showShortSearchHint || showSearchResult ? 'mt-2' : ''">
+          <template v-if="showShortSearchHint">
+            輸入至少 {{ MIN_AUTO_SEARCH_LENGTH }} 個字元會自動搜尋，或按 Enter 直接搜尋。
+          </template>
+          <template v-else-if="showSearchResult">
             符合「{{ activeSearch }}」（{{ searchResultScope }}）：<strong class="font-semibold text-ink tabular-nums">{{ formatCount(matchingRecords) }}</strong> 筆
           </template>
         </p>
