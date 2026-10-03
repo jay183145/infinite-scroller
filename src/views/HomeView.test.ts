@@ -260,6 +260,56 @@ describe('HomeView reload after changes', () => {
     expect(row(wrapper, 2).text()).toContain('Zed Example')
     expect((await rowAt(wrapper, 1_200)).text()).toContain('DATA-00001200')
   })
+
+  async function deleteRow(wrapper: VueWrapper, position: number): Promise<void> {
+    await row(wrapper, position).get('[data-action="delete"]').trigger('click')
+    await wrapper.findAll('dialog button').find((button) => button.text() === '確認刪除')!.trigger('click')
+    await flushPromises()
+  }
+
+  it('removes a deleted row locally and continues loading from the shifted offset', async () => {
+    const wrapper = await mountHomeView()
+    await loadBatches(wrapper, 2)
+    pageRequests.length = 0
+
+    await deleteRow(wrapper, 2)
+
+    // 後面沒有 PIN：之後的列往前一格就是新順序，不必重抓。
+    expect(pageRequests).toEqual([])
+    expect(loadedCount(wrapper)).toBe('1,499')
+    expect(wrapper.get('table').attributes('aria-rowcount')).toBe('10000000')
+    expect(row(wrapper, 2).text()).toContain('DATA-00000003')
+    expect((await rowAt(wrapper, 1_499)).text()).toContain('DATA-00001500')
+
+    // 下一批從移除後的筆數接著抓，與本地資料無縫接上。
+    await loadBatches(wrapper, 1)
+    expect(pageRequests).toEqual([{ offset: 1_499, limit: 500 }])
+    expect((await rowAt(wrapper, 1_500)).text()).toContain('DATA-00001501')
+  })
+
+  it('refetches through the end when a pinned row follows the deleted row', async () => {
+    const wrapper = await mountHomeView()
+    await loadBatches(wrapper, 2)
+    await row(wrapper, 1).get('[data-action="position"]').trigger('click')
+    await wrapper.get('dialog input[type="number"]').setValue(300)
+    await wrapper.get('dialog form').trigger('submit')
+    await flushPromises()
+    pageRequests.length = 0
+
+    await rowAt(wrapper, 1)
+    await deleteRow(wrapper, 2)
+
+    // 第 300 筆的 PIN 固定不動，單純往前移一格會讓它錯位，因此退回重抓。
+    expect(pageRequests).toEqual([
+      { offset: 0, limit: 500 },
+      { offset: 500, limit: 500 },
+      { offset: 1_000, limit: 500 },
+    ])
+    expect((await rowAt(wrapper, 299)).text()).toContain('DATA-00000301')
+    const pinnedRow = await rowAt(wrapper, 300)
+    expect(pinnedRow.text()).toContain('DATA-00000001')
+    expect(pinnedRow.text()).toContain('PIN TO #300')
+  })
 })
 
 describe('HomeView search', () => {

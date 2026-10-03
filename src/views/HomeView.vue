@@ -395,6 +395,29 @@ async function reloadLoadedRange(fromPosition = 1, toPosition = Number.POSITIVE_
   }
 }
 
+// 某一筆從列表消失（刪除，或改完不再符合搜尋條件）時，之後的列往前一格就是新順序，直接在本地移除，不必重抓。
+// PIN 固定在原位置、不會跟著往前移；已載入範圍內這筆之後還有 PIN 時回傳 false，由呼叫端重抓。
+function removeLoadedRow(id: string, position: number, recordDeleted: boolean): boolean {
+  const index = position - 1
+  const loaded = records.value
+  if (loaded[index]?.id !== id) return false
+  for (const pinnedIndex of manualPositions.value.values()) {
+    if (pinnedIndex > index && pinnedIndex < loaded.length) return false
+  }
+
+  // 讓進行中的 loadMore 失效：它的 offset 是依移除前的筆數算的，接上來會多出一筆重複的資料。
+  startListRequest()
+  records.value = loaded.slice(0, index).concat(loaded.slice(index + 1))
+  const nextPositions = new Map(manualPositions.value)
+  nextPositions.delete(id)
+  manualPositions.value = nextPositions
+  if (recordDeleted) totalRecords.value -= 1
+  pageTotal.value -= 1
+  matchingRecords.value = pageTotal.value
+  void continueLoadingIfNeeded()
+  return true
+}
+
 // 目標列可能尚未渲染：先依列高捲到附近讓虛擬列表渲染該列，再以實際元素置中。
 async function scrollToPosition(position: number): Promise<void> {
   scrollToIndex(position - 1)
@@ -476,15 +499,17 @@ async function updateEmployee(employee: EmployeeDraft): Promise<void> {
   dialogError.value = ''
   try {
     // 改到目前排序的欄位時，這筆可能移到更前面，需從第一批重抓到最後；
-    // 改完不再符合搜尋條件時，這筆會從列表消失、之後每列往前一格，從這筆重抓到最後；
+    // 改完不再符合搜尋條件時，這筆會從列表消失、之後每列往前一格，在本地移除（之後有 PIN 時才從這筆重抓到最後）；
     // 其他情況列的順序不變，只重抓這筆所在的批次。
+    const { id } = activeEmployee.value
     const sortValueChanged = String(activeEmployee.value[sortBy.value]) !== String(employee[sortBy.value])
-    const stillMatches = matchesEmployeeSearch({ ...employee, id: activeEmployee.value.id }, activeSearch.value, searchField.value)
-    await getRepository().update(activeEmployee.value.id, employee)
+    const stillMatches = matchesEmployeeSearch({ ...employee, id }, activeSearch.value, searchField.value)
+    await getRepository().update(id, employee)
     closeDialog()
     if (sortValueChanged) await reloadLoadedRange(1)
-    else if (!stillMatches) await reloadLoadedRange(activePosition.value)
-    else await reloadLoadedRange(activePosition.value, activePosition.value)
+    else if (!stillMatches) {
+      if (!removeLoadedRow(id, activePosition.value, false)) await reloadLoadedRange(activePosition.value)
+    } else await reloadLoadedRange(activePosition.value, activePosition.value)
     void announce('人員資料已更新。')
     await restoreRowFocus(activeEmployee.value.id, activePosition.value, 'edit')
   } catch {
@@ -500,7 +525,7 @@ async function deleteEmployee(id: string): Promise<void> {
   try {
     await getRepository().delete(id, activePosition.value, getCurrentQuery())
     closeDialog()
-    await reloadLoadedRange(activePosition.value)
+    if (!removeLoadedRow(id, activePosition.value, true)) await reloadLoadedRange(activePosition.value)
     void announce('人員資料已刪除。')
     await restoreRowFocus(undefined, activePosition.value, 'edit')
   } catch (error) {
