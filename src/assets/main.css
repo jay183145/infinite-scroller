@@ -80,6 +80,22 @@
     select option::checkmark {
       color: var(--color-accent);
     }
+
+    /* 摘要的資料規模選單：數字與「筆」不換行，箭頭靠近一點，窄螢幕才放得下。 */
+    .summary-size-select {
+      gap: 0.25rem;
+      white-space: nowrap;
+    }
+
+    /* 選單本身是大字數字；展開的選項維持一般字級，避免清單過大。 */
+    .summary-size-select option {
+      font-size: 0.9375rem;
+      font-weight: 500;
+    }
+
+    .summary-size-select option:checked {
+      font-weight: 600;
+    }
   }
 }
 

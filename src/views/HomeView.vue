@@ -596,7 +596,8 @@ onBeforeUnmount(() => {
             <span class="rounded-full border border-accent/30 bg-surface px-2.5 py-0.5 text-xs font-semibold text-accent">模擬資料</span>
           </div>
         </div>
-        <button class="shrink-0 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-[#1d6045] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" @click="openDialog('create')">新增人員</button>
+        <!-- base.css 讓 button 繼承父層字型，字級寫在內層 span 才會生效。 -->
+        <button class="shrink-0 rounded-md bg-accent px-3 py-1.5 font-semibold text-white hover:bg-[#1d6045] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:px-4 sm:py-2" @click="openDialog('create')"><span class="block text-[0.8125rem] leading-5 sm:text-base sm:leading-6">新增人員</span></button>
       </section>
     </header>
 
@@ -613,7 +614,7 @@ onBeforeUnmount(() => {
             人員資料
             <span class="rounded-full border border-accent/30 bg-surface px-2 py-px text-[0.6875rem] font-semibold text-accent">模擬資料</span>
           </p>
-          <button class="shrink-0 rounded-md bg-accent px-3 py-1.5 text-sm font-semibold text-white hover:bg-[#1d6045] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" @click="openDialog('create')">新增人員</button>
+          <button class="shrink-0 rounded-md bg-accent px-2.5 py-1 font-semibold text-white hover:bg-[#1d6045] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:px-3 sm:py-1.5" @click="openDialog('create')"><span class="block text-[0.8125rem] leading-5 sm:text-base sm:leading-6">新增人員</span></button>
         </div>
       </div>
     </Transition>
@@ -622,27 +623,25 @@ onBeforeUnmount(() => {
     <main class="mx-auto w-full max-w-370 px-4 pb-24 sm:px-6 lg:px-10">
       <section ref="summarySection" aria-label="資料摘要" class="summary-grid sticky top-15 z-10 mt-4 grid sm:mt-7 grid-cols-2 rounded-md border border-l-4 border-line border-l-accent bg-canvas px-4 sm:px-6">
         <div class="min-w-0 py-3 pr-3 sm:py-5">
-          <!-- 手機寬度：總資料量直接當作資料規模選單，省掉下方獨立的一列；平板以上維持純數字，規模選單在列表上方。 -->
-          <label for="dataset-size-summary" class="block text-xs text-ink/75 sm:hidden">總資料量</label>
+          <!-- 總資料量直接當作資料規模選單，省掉列表上方獨立的一列。 -->
+          <label for="dataset-size-summary" class="block text-xs text-ink/75 sm:text-sm">總資料量</label>
           <select
             id="dataset-size-summary"
             name="datasetSizeSummary"
             :value="datasetSize"
             :disabled="isResetting"
-            class="mt-2 min-w-0 max-w-full rounded border-0 bg-transparent p-0 text-xl font-semibold leading-7 text-ink tabular-nums max-[359px]:text-lg outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60 sm:hidden"
+            class="summary-size-select mt-2 min-w-0 max-w-full rounded border-0 bg-transparent p-0 text-lg font-semibold leading-7 text-ink tabular-nums max-[359px]:text-[0.9375rem] outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60 sm:text-[1.75rem]"
             @change="changeDatasetSize"
           >
-            <option v-for="option in DATASET_SIZE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+            <option v-for="option in DATASET_SIZE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }} 筆</option>
           </select>
           <!-- 選單值是假資料的基礎筆數；新增、刪除後實際總數會不同，如實列出。 -->
-          <p v-if="totalRecords > 0 && totalRecords !== datasetSize" class="mt-0.5 text-xs text-ink/75 sm:hidden">目前共 {{ formatCount(totalRecords) }} 筆</p>
-          <p class="text-xs text-ink/75 max-sm:hidden sm:text-sm">總資料量</p>
-          <p class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums max-sm:hidden sm:text-[1.75rem]">{{ formatCount(totalRecords) }}</p>
+          <p v-if="totalRecords > 0 && totalRecords !== datasetSize" class="mt-0.5 text-xs text-ink/75 sm:text-sm">目前共 {{ formatCount(totalRecords) }} 筆</p>
         </div>
         <!-- 符合條件筆數只在搜尋時有意義，改顯示在搜尋框下方；未搜尋時它等於總資料量。 -->
         <div class="min-w-0 border-l border-line py-3 pl-3 sm:py-5 sm:pl-6">
           <p class="text-xs text-ink/75 sm:text-sm">目前載入</p>
-          <p data-summary="loaded" class="mt-2 min-w-0 whitespace-nowrap text-xl font-semibold leading-7 tabular-nums max-[359px]:text-lg sm:text-[1.75rem]">{{ formatCount(loadedCount) }}</p>
+          <p class="mt-2 min-w-0 whitespace-nowrap text-lg font-semibold leading-7 tabular-nums max-[359px]:text-[0.9375rem] sm:text-[1.75rem]"><span data-summary="loaded">{{ formatCount(loadedCount) }}</span> 筆</p>
         </div>
       </section>
 
@@ -701,25 +700,9 @@ onBeforeUnmount(() => {
           </template>
         </p>
 
-        <div class="mb-4 mt-2 flex flex-wrap items-center justify-between gap-2 sm:my-4 sm:gap-3">
-          <!-- 手機寬度改由上方「總資料量」選擇資料規模。 -->
-          <label class="flex items-center gap-3 text-sm font-medium text-ink max-sm:hidden">
-            資料規模
-            <select
-              id="dataset-size"
-              name="datasetSize"
-              :value="datasetSize"
-              :disabled="isResetting"
-              class="min-w-[9.5em] rounded-md border border-line bg-surface px-3 py-2 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
-              @change="changeDatasetSize"
-            >
-              <option v-for="option in DATASET_SIZE_OPTIONS" :key="option.value" :value="option.value">
-                {{ option.label }} 筆
-              </option>
-            </select>
-          </label>
+        <div class="mb-4 mt-2 flex flex-wrap items-center justify-between gap-2 sm:my-4 sm:gap-3 lg:hidden">
           <!-- 卡片版面（< 1024px）沒有表頭：「排序｜欄位｜方向」組成一組，標籤放在框內。 -->
-          <div class="flex w-full rounded-md border border-line bg-surface focus-within:ring-2 focus-within:ring-accent sm:w-auto lg:hidden">
+          <div class="flex w-full rounded-md border border-line bg-surface focus-within:ring-2 focus-within:ring-accent sm:w-auto">
             <label for="sort-field" class="flex shrink-0 items-center rounded-l-md border-r border-line bg-canvas px-3 text-sm font-medium text-ink">排序</label>
             <select
               id="sort-field"
