@@ -64,9 +64,9 @@ kyle 的專案
 
 | 優先 | 位置 | 問題 | 調整 |
 | --- | --- | --- | --- |
-| 🔴 | [`HomeView.vue`](src/views/HomeView.vue) 的 `reloadLoadedRange()` | 編輯、刪除或 PIN 之後，從受影響的那批一路重抓到已載入的筆數。捲到第 20,000 筆時改一筆資料，就會連發 40 次 request（20,000 ÷ 500）。 | 只重抓受影響的那一頁，或在本地直接更新那一列；超出畫面的部分標記為過期，捲到時再抓。 |
+| 🟡 | [`HomeView.vue`](src/views/HomeView.vue) 的 `reloadLoadedRange()` | 編輯、刪除或 PIN 之後要重抓列表。原本一律從受影響的那批抓到已載入的最後一筆，捲到第 20,000 筆時改一筆資料，就會連發 40 次 request（20,000 ÷ 500）。 | ✅ 已改善：PIN TO 只重抓原位置到目標位置之間的批次；編輯時沒改到排序欄位、改完仍符合搜尋條件，只重抓那一批。刪除、改到排序欄位、改完不再符合搜尋條件時，後面的列都會位移，仍要抓到最後；這部分之後可改成在本地更新，超出畫面的列標記為過期，捲到時再抓。 |
 | 🔴 | [`HomeView.vue`](src/views/HomeView.vue) 的 `loadMore()` 和 `continueLoadingIfNeeded()` | 搜尋時每 500 筆（`PAGE_SIZE`）就是一次搜尋 request。用 offset 分頁時，後端每次都要重新算一遍搜尋結果。 | 改用 cursor 分頁；自動接續載入設上限（連續 N 批後改成按鈕「載入更多」）；對 `loadMore` 加 throttle。 |
-| 🟡 | [`HomeView.vue`](src/views/HomeView.vue) 的 `searchInput` watch | 沒有最少字數限制。只打 1 個字元就搜尋全部欄位，在 1,000 萬筆資料裡幾乎每筆都符合，是最貴的全表掃描。 | 文字欄位至少 2 個字元才送出（年齡、資料編號例外）；debounce 可從 300ms 調到 400～500ms。 |
+| 🟡 | [`HomeView.vue`](src/views/HomeView.vue) 的 `searchInput` watch | 沒有最少字數限制。只打 1 個字元就搜尋全部欄位，在 1,000 萬筆資料裡幾乎每筆都符合，是最貴的全表掃描。 | 文字欄位至少 2 個字元才送出（年齡是完全比對，可以例外）；debounce 可從 300ms 調到 400～500ms。 |
 | 🟢 | [`mockEmployeeRepository.ts`](src/data/mockEmployeeRepository.ts) 的 `runEmployeeQuery()` | 目前直接終止 Worker 來取消查詢。換成 API 後，取消只是前端不收結果，request 已經送到後端，後端照樣會處理。 | 改用 `fetch` 搭配 `AbortController`。真正能減少 request 數的是最少字數和 debounce。 |
 | 🟢 | 全域 | 沒有埋點，查不出是哪個操作讓流量變多。 | 每次 request 帶上 `X-Trigger` header（`typing` / `enter` / `scroll` / `reload` / `sort`），dashboard 就能看出流量來自哪裡。 |
 
@@ -75,6 +75,7 @@ kyle 的專案
 - 打字有 300ms debounce（`SEARCH_DEBOUNCE_MS`），內容沒變不會重送。
 - 用 `latestPageRequestId` 丟掉過期的回應，舊結果不會蓋掉新結果。
 - `loadMore` 失敗後就停止，不會無限 retry。
+- PIN TO 和不影響順序的編輯只重抓受影響的批次（`reloadLoadedRange()` 的 `toPosition` 參數），不會因為捲得深就多打幾十次 request。
 - 沒有搜尋條件、而且照資料編號排序時，直接依索引分頁，不必全量掃描。
 
 **後端（換成真 API 才需要）：**

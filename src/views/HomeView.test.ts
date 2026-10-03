@@ -7,6 +7,8 @@ import HomeView from './HomeView.vue'
 
 // 可暫停 getPage 的閘門，用來模擬排序／搜尋開著時要數秒才重抓完的列表；未設定時直接放行。
 const pageGate = vi.hoisted(() => ({ wait: undefined as Promise<void> | undefined }))
+// 記錄列表發出的整批 getPage（排除 repository 內部確認位置用的單筆查詢），用來斷言異動後重抓了哪些批次。
+const pageRequests = vi.hoisted(() => [] as Array<{ offset: number; limit: number }>)
 
 vi.mock('../data/mockEmployeeRepository', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../data/mockEmployeeRepository')>()
@@ -17,6 +19,7 @@ vi.mock('../data/mockEmployeeRepository', async (importOriginal) => {
       return {
         ...repository,
         async getPage(request: Parameters<typeof repository.getPage>[0]) {
+          if (request.limit > 1) pageRequests.push({ offset: request.offset, limit: request.limit })
           if (pageGate.wait) await pageGate.wait
           return repository.getPage(request)
         },
@@ -71,6 +74,7 @@ async function mountHomeView(): Promise<VueWrapper> {
 }
 
 beforeEach(() => {
+  pageRequests.length = 0
   intersectionCallbacks = []
   observedTargets = new Map()
   vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
@@ -197,6 +201,64 @@ describe('HomeView action feedback', () => {
     release()
     await flushPromises()
     expect(wrapper.get('#action-status').text()).toContain('人員資料已更新。')
+  })
+})
+
+describe('HomeView reload after changes', () => {
+  async function loadBatches(wrapper: VueWrapper, count: number): Promise<void> {
+    for (let index = 0; index < count; index += 1) {
+      for (const callback of intersectionCallbacks) {
+        callback([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+      }
+      await flushPromises()
+    }
+  }
+
+  async function rowAt(wrapper: VueWrapper, position: number) {
+    layout.scrollWindowTo(LIST_TOP + (position - 1) * ROW_PITCH)
+    layout.flushFrames()
+    await nextTick()
+    return row(wrapper, position)
+  }
+
+  it('refetches only the batches between the original and target position after PIN TO', async () => {
+    const wrapper = await mountHomeView()
+    await loadBatches(wrapper, 2)
+    expect(loadedCount(wrapper)).toBe('1,500')
+    pageRequests.length = 0
+
+    const movedRow = await rowAt(wrapper, 600)
+    expect(movedRow.text()).toContain('DATA-00000600')
+    await movedRow.get('[data-action="position"]').trigger('click')
+    await wrapper.get('dialog input[type="number"]').setValue(5)
+    await wrapper.get('dialog form').trigger('submit')
+    await flushPromises()
+
+    // 第 5～600 筆分布在前兩批；第三批（第 1,001 筆起）不受影響，沿用已載入的資料。
+    expect(pageRequests).toEqual([{ offset: 0, limit: 500 }, { offset: 500, limit: 500 }])
+    expect(loadedCount(wrapper)).toBe('1,500')
+    expect((await rowAt(wrapper, 5)).text()).toContain('DATA-00000600')
+    expect((await rowAt(wrapper, 6)).text()).toContain('DATA-00000005')
+    expect((await rowAt(wrapper, 600)).text()).toContain('DATA-00000599')
+    expect((await rowAt(wrapper, 601)).text()).toContain('DATA-00000601')
+    expect((await rowAt(wrapper, 1_200)).text()).toContain('DATA-00001200')
+  })
+
+  it('refetches only the edited row batch when the edit keeps the row in place', async () => {
+    const wrapper = await mountHomeView()
+    await loadBatches(wrapper, 2)
+    pageRequests.length = 0
+
+    await row(wrapper, 2).get('[data-action="edit"]').trigger('click')
+    await wrapper.get('dialog input[name="name"]').setValue('Zed Example')
+    await wrapper.get('dialog form').trigger('submit')
+    await wrapper.findAll('dialog button').find((button) => button.text() === '確認更新')!.trigger('click')
+    await flushPromises()
+
+    expect(pageRequests).toEqual([{ offset: 0, limit: 500 }])
+    expect(loadedCount(wrapper)).toBe('1,500')
+    expect(row(wrapper, 2).text()).toContain('Zed Example')
+    expect((await rowAt(wrapper, 1_200)).text()).toContain('DATA-00001200')
   })
 })
 

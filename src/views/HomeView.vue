@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch 
 import EmployeeDialog from '../components/EmployeeDialog.vue'
 import LoadingSpinner from '../components/LoadingSpinner.vue'
 import { useWindowVirtualRows } from '../composables/useWindowVirtualRows'
+import { matchesEmployeeSearch } from '../data/employeeQuery'
 import { createMockEmployeeRepository } from '../data/mockEmployeeRepository'
 import {
   DATASET_SIZE_OPTIONS,
@@ -353,22 +354,26 @@ function retryLoadMore(): void {
   void loadMore()
 }
 
-// 異動後只重抓受影響批次到目前已載入的筆數，保留前面的列與捲動位置；全部抓完才一次替換，避免畫面閃動。
-async function reloadLoadedRange(fromPosition = 1): Promise<void> {
+// 異動後只重抓 fromPosition～toPosition 所在的批次，範圍前後已載入的列原樣保留，捲動位置不變；全部抓完才一次替換，避免畫面閃動。
+// 未指定 toPosition 時重抓到目前已載入的筆數：刪除或排序位置改變時，之後每一列都可能位移。
+async function reloadLoadedRange(fromPosition = 1, toPosition = Number.POSITIVE_INFINITY): Promise<void> {
   const requestId = startListRequest()
   const query = getCurrentQuery()
-  const targetCount = Math.max(records.value.length, PAGE_SIZE)
+  const previousRecords = records.value
+  const targetCount = Math.max(previousRecords.length, PAGE_SIZE)
+  // 結束位置對齊到批次邊界，接回的後段才會從整批的開頭開始。
+  const endOffset = Math.min(targetCount, Math.ceil(Math.max(1, toPosition) / PAGE_SIZE) * PAGE_SIZE)
   let offset = Math.min(
-    records.value.length,
+    previousRecords.length,
     Math.floor((Math.max(1, fromPosition) - 1) / PAGE_SIZE) * PAGE_SIZE,
   )
-  let nextRecords = records.value.slice(0, offset)
+  let nextRecords = previousRecords.slice(0, offset)
   let lastPage: EmployeePage | undefined
   busyMessage.value = '正在更新列表…'
   isResetting.value = true
 
   try {
-    while (offset < targetCount) {
+    while (offset < endOffset) {
       const page = await getRepository().getPage({ ...query, offset, limit: PAGE_SIZE })
       if (isStaleRequest(requestId)) return
 
@@ -378,7 +383,8 @@ async function reloadLoadedRange(fromPosition = 1): Promise<void> {
       if (page.records.length < PAGE_SIZE) break
     }
 
-    records.value = nextRecords
+    // 範圍內整批都抓到才接回後段；提早遇到不滿一批表示資料已到結尾，後段不再存在。
+    records.value = offset >= endOffset ? nextRecords.concat(previousRecords.slice(endOffset)) : nextRecords
     if (lastPage) applyPageSummary(lastPage)
     void continueLoadingIfNeeded()
   } catch (error) {
@@ -469,11 +475,16 @@ async function updateEmployee(employee: EmployeeDraft): Promise<void> {
   isSaving.value = true
   dialogError.value = ''
   try {
-    // 改到目前排序的欄位時，這筆可能移到更前面，需從第一批重抓；否則只影響這筆所在批次之後。
+    // 改到目前排序的欄位時，這筆可能移到更前面，需從第一批重抓到最後；
+    // 改完不再符合搜尋條件時，這筆會從列表消失、之後每列往前一格，從這筆重抓到最後；
+    // 其他情況列的順序不變，只重抓這筆所在的批次。
     const sortValueChanged = String(activeEmployee.value[sortBy.value]) !== String(employee[sortBy.value])
+    const stillMatches = matchesEmployeeSearch({ ...employee, id: activeEmployee.value.id }, activeSearch.value, searchField.value)
     await getRepository().update(activeEmployee.value.id, employee)
     closeDialog()
-    await reloadLoadedRange(sortValueChanged ? 1 : activePosition.value)
+    if (sortValueChanged) await reloadLoadedRange(1)
+    else if (!stillMatches) await reloadLoadedRange(activePosition.value)
+    else await reloadLoadedRange(activePosition.value, activePosition.value)
     void announce('人員資料已更新。')
     await restoreRowFocus(activeEmployee.value.id, activePosition.value, 'edit')
   } catch {
@@ -507,7 +518,11 @@ async function moveEmployeeToPosition(targetPosition: number): Promise<void> {
   try {
     await getRepository().moveToPosition(activeEmployee.value.id, activePosition.value, targetPosition, getCurrentQuery())
     closeDialog()
-    await reloadLoadedRange(Math.min(activePosition.value, targetPosition))
+    // 只有原位置與目標位置之間的列會位移一格；之後的列少了一筆、也少了一個位置，兩者抵銷，不必重抓。
+    await reloadLoadedRange(
+      Math.min(activePosition.value, targetPosition),
+      Math.max(activePosition.value, targetPosition),
+    )
 
     const { id, name } = activeEmployee.value
     if (targetPosition <= records.value.length) {
