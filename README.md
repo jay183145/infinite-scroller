@@ -65,7 +65,7 @@ kyle 的專案
 | 優先 | 位置 | 問題 | 調整 |
 | --- | --- | --- | --- |
 | 🟢 | [`HomeView.vue`](src/views/HomeView.vue) 的 `reloadLoadedRange()` 和 `removeLoadedRow()` | 編輯、刪除或 PIN 之後要重抓列表。原本一律從受影響的那批抓到已載入的最後一筆，捲到第 20,000 筆時改一筆資料，就會連發 40 次 request（20,000 ÷ 500）。 | ✅ 已改善：PIN TO 只重抓原位置到目標位置之間的批次；編輯時沒改到排序欄位、改完仍符合搜尋條件，只重抓那一批；刪除或改完不再符合搜尋條件時，如果這筆後面沒有 PIN，直接在本地移除那一列，不發 request。仍要抓到最後的情況：改到排序欄位（這筆可能移到任何位置），以及刪除位置後面有 PIN（PIN 固定不動，不能跟著往前移）。改到排序欄位之後可改成先查出新位置，只重抓兩個位置之間。 |
-| 🔴 | [`HomeView.vue`](src/views/HomeView.vue) 的 `loadMore()` 和 `continueLoadingIfNeeded()` | 搜尋時每 500 筆（`PAGE_SIZE`）就是一次搜尋 request。用 offset 分頁時，後端每次都要重新算一遍搜尋結果。 | 改用 cursor 分頁；自動接續載入設上限（連續 N 批後改成按鈕「載入更多」）；對 `loadMore` 加 throttle。 |
+| 🟢 | [`HomeView.vue`](src/views/HomeView.vue) 的 `loadMore()` 和 `continueLoadingIfNeeded()` | 搜尋時每 500 筆（`PAGE_SIZE`）就是一次搜尋 request。換成 API 並用 offset 分頁時，後端每頁都要重新算一遍搜尋結果。 | 目前專案不需要處理：載入量取決於使用者捲多遠，`isLoadingMore` 讓載入一次只跑一批，不會自己失控；Worker 把整份結果排序好存在快取，用 offset 直接切片，不會每頁重算。限制自動載入會拿掉 infinite scroll 的核心功能，因此不做。接上 API 後再改用 cursor 分頁，讓後端不必每頁重算。 |
 | 🟢 | [`HomeView.vue`](src/views/HomeView.vue) 的 `searchInput` watch | 原本沒有最少字數限制。只打 1 個字元就搜尋全部欄位，在 1,000 萬筆資料裡幾乎每筆都符合，是最貴的全表掃描。 | ✅ 已改善：打字時至少 2 個字元才自動搜尋（`MIN_AUTO_SEARCH_LENGTH`），不足時提示「輸入至少 2 個字元會自動搜尋，或按 Enter 直接搜尋」；按 Enter 仍可搜尋 1 個字元；年齡是完全比對，不受限制。debounce 之後可視需要從 300ms 調到 400～500ms。 |
 | 🟢 | [`mockEmployeeRepository.ts`](src/data/mockEmployeeRepository.ts) 的 `runEmployeeQuery()` | 目前直接終止 Worker 來取消查詢。換成 API 後，取消只是前端不收結果，request 已經送到後端，後端照樣會處理。 | 改用 `fetch` 搭配 `AbortController`。真正能減少 request 數的是最少字數和 debounce。 |
 | 🟢 | 全域 | 沒有埋點，查不出是哪個操作讓流量變多。 | 每次 request 帶上 `X-Trigger` header（`typing` / `enter` / `scroll` / `reload` / `sort`），dashboard 就能看出流量來自哪裡。 |
